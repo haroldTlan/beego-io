@@ -20,11 +20,11 @@ func init() {
 				&controllers.DisksController{},
 			),
 		),
-	/*	beego.NSNamespace("/raids",
-		beego.NSInclude(
-			&controllers.RaidsController{},
+		beego.NSNamespace("/raids",
+			beego.NSInclude(
+				&controllers.RaidsController{},
+			),
 		),
-	),*/
 	)
 	beego.AddNamespace(ns)
 }

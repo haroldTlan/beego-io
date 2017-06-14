@@ -1,33 +1,32 @@
 package models
 
 import (
-	/*"errors"
-	  "strconv"
-	*/
 	"fmt"
 	"github.com/astaxie/beego/orm"
+	"os"
 	"speedio/models/util"
 	"strings"
 	"time"
 )
 
 type Disks struct {
-	Id        string    `orm:"column(uuid);size(255);pk" json:"uuid"`
+	Id        string    `orm:"column(uuid);size(255);pk"          json:"uuid"`
 	Created   time.Time `orm:"column(created_at);type(datetime)"  json:"created_at"`
 	Updated   time.Time `orm:"column(updated_at);type(datetime)"  json:"updated_at"`
-	Loc       string    `orm:"column(location);size(255)" json:"location"`
-	Ploc      string    `orm:"column(prev_location);size(255)" json:"prev_location"`
-	Health    string    `orm:"column(health);size(255)" json:"health"`
-	Role      string    `orm:"column(role);size(255)" json:"role"`
-	Raid      string    `orm:"column(raid);size(255)"  json:"raid"`       //raid's name
-	RaidId    string    `orm:"column(raid_id);size(255)"  json:"raid_id"` //raid's uuid
-	Disktype  string    `orm:"column(disktype);size(255)" json:"disktype"`
-	Vendor    string    `orm:"column(vendor);size(255)" json:"vendor"`
-	Model     string    `orm:"column(model);size(255)" json:"model"`
-	Host      string    `orm:"column(host);size(255)" json:"host"`
-	Sn        string    `orm:"column(sn);size(255)" json:"sn"`
-	CapSector int64     `orm:"column(cap_sector)" json:"cap_sector"`
-	Link      int64     `orm:"column(link)" json:"link"`
+	Loc       string    `orm:"column(location);size(255)"         json:"location"`
+	Ploc      string    `orm:"column(prev_location);size(255)"    json:"prev_location"`
+	Health    string    `orm:"column(health);size(255)"           json:"health"`
+	Role      string    `orm:"column(role);size(255)"             json:"role"`
+	Raid      string    `orm:"column(raid);size(255)"             json:"raid"`    //raid's name
+	RaidId    string    `orm:"column(raid_id);size(255)"          json:"raid_id"` //raid's uuid
+	Disktype  string    `orm:"column(disktype);size(255)"         json:"disktype"`
+	Vendor    string    `orm:"column(vendor);size(255)"           json:"vendor"`
+	Model     string    `orm:"column(model);size(255)"            json:"model"`
+	Host      string    `orm:"column(host);size(255)"             json:"host"`
+	Sn        string    `orm:"column(sn);size(255)"               json:"sn"`
+	CapSector int64     `orm:"column(cap_sector)"                 json:"cap_sector"`
+	DevName   string    `orm:"column(dev_name);size(255)"         json:"dev_name"`
+	Link      bool      `orm:"column(link)"                       json:"link"`
 }
 
 var (
@@ -167,49 +166,74 @@ func GetDisksByLoc(loc string) (d Disks, err error) {
 	return
 }
 
-/*
-var (
-	Objects map[string]*Object
-)
+// Get disks by any argv
+func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}) (d []Disks, err error) {
+	o := orm.NewOrm()
 
-type Object struct {
-	ObjectId   string
-	Score      int64
-	PlayerName string
-}
+	if len(items) == 0 {
+		for k, v := range item {
 
-func init() {
-	Objects = make(map[string]*Object)
-	Objects["hjkhsbnmn123"] = &Object{"hjkhsbnmn123", 100, "astaxie"}
-	Objects["mjjkxsxsaa23"] = &Object{"mjjkxsxsaa23", 101, "someone"}
-}
+			switch k {
 
-func AddOne(object Object) (ObjectId string) {
-	object.ObjectId = "astaxie" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	Objects[object.ObjectId] = &object
-	return object.ObjectId
-}
+			case "location":
+				locs := strings.Split(v.(string), ",") //Dangerous
+				for _, loc := range locs {
+					if exist := o.QueryTable(new(Disks)).Filter(k, loc).Exist(); !exist {
+						//TODO          AddLog(err)
+						err = fmt.Errorf("not exist")
+						return
 
-func GetOne(ObjectId string) (object *Object, err error) {
-	if v, ok := Objects[ObjectId]; ok {
-		return v, nil
+					}
+					var temp Disks
+					if err := o.QueryTable(new(Disks)).Filter(k, loc).One(&temp); err != nil {
+						//TODO          AddLog(err)
+					}
+					d = append(d, temp)
+				}
+			default:
+				if exist := o.QueryTable(new(Disks)).Filter(k, v).Exist(); !exist {
+					//TODO          AddLog(err)
+					err = fmt.Errorf("not exist")
+					return
+				}
+				if _, err := o.QueryTable(new(Disks)).Filter(k, v).All(&d); err != nil {
+					//TODO          AddLog(err)
+				}
+			}
+		}
 	}
-	return nil, errors.New("ObjectId Not Exist")
+	// when items > 0 TODO
+
+	return
 }
 
-func GetAll() map[string]*Object {
-	return Objects
-}
+// Update disk
+// When raid's status has changed
+func UpdateDiskByRole(locations, style, name, uuid string, link bool) (err error) {
+	o := orm.NewOrm()
 
-func Update(ObjectId string, Score int64) (err error) {
-	if v, ok := Objects[ObjectId]; ok {
-		v.Score = Score
-		return nil
+	loc := strings.Split(locations, ",")
+	for _, l := range loc {
+		d, err := GetDisksByLoc(l)
+		if err != nil {
+			//TODO          AddLog(err)
+		}
+		d.Role = style
+		d.Raid = name
+		d.RaidId = uuid
+		d.Updated = time.Now()
+		d.Link = link
+		if _, err := o.Update(&d); err != nil {
+			//TODO          AddLog(err)
+		}
 	}
-	return errors.New("ObjectId Not Exist")
+	return
 }
 
-func Delete(ObjectId string) {
-	delete(Objects, ObjectId)
+func (d *Disks) DevPath() (dm_path string) {
+	dm_path = fmt.Sprintf("/dev/mapper/s%s", d.DevName)
+	if _, err := os.Stat(dm_path); os.IsNotExist(err) {
+		return fmt.Sprintf("/dev/%s", d.DevName)
+	}
+	return
 }
-*/
