@@ -176,17 +176,19 @@ func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}
 			switch k {
 
 			case "location":
-				locs := strings.Split(v.(string), ",") //Dangerous
+				locs := strings.FieldsFunc(v.(string), func(c rune) bool { return c == ',' }) //Dangerous
 				for _, loc := range locs {
 					if exist := o.QueryTable(new(Disks)).Filter(k, loc).Exist(); !exist {
 						//TODO          AddLog(err)
 						err = fmt.Errorf("not exist")
+						util.AddLog(err)
 						return
 
 					}
 					var temp Disks
-					if err := o.QueryTable(new(Disks)).Filter(k, loc).One(&temp); err != nil {
-						//TODO          AddLog(err)
+					if err = o.QueryTable(new(Disks)).Filter(k, loc).One(&temp); err != nil {
+						util.AddLog(err)
+						return
 					}
 					d = append(d, temp)
 				}
@@ -194,10 +196,12 @@ func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}
 				if exist := o.QueryTable(new(Disks)).Filter(k, v).Exist(); !exist {
 					//TODO          AddLog(err)
 					err = fmt.Errorf("not exist")
+					util.AddLog(err)
 					return
 				}
 				if _, err := o.QueryTable(new(Disks)).Filter(k, v).All(&d); err != nil {
 					//TODO          AddLog(err)
+					util.AddLog(err)
 				}
 			}
 		}

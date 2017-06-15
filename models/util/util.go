@@ -20,6 +20,21 @@ func Urandom() string {
 }
 
 // Cmd
+func ExecuteByStr(cmdArgs string) (output string, err error) {
+	cmd := exec.Command("/bin/sh", "-c", cmdArgs)
+
+	// Stdout buffer
+	w := &bytes.Buffer{}
+	// Attach buffer to command
+	cmd.Stderr = w
+	cmd.Stdout = w
+	// Execute command
+	err = cmd.Run() // will wait for command to return
+
+	return string(w.Bytes()), nil
+}
+
+// Cmd
 func Execute(name string, cmdArgs []string) (output string, err error) {
 	cmd := exec.Command(name, cmdArgs...)
 
