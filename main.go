@@ -19,7 +19,7 @@ func init() {
 	orm.RegisterDataBase("default", "sqlite3", Dbfile)
 	orm.DefaultTimeLoc = time.Local
 
-	logs.SetLogger(logs.AdapterFile, `{"filename":"/var/log/newSpeedio.log","daily":false,"maxdays":365,"level":3}`)
+	logs.SetLogger(logs.AdapterFile, `{"filename":"/var/log/newSpeedio.log","daily":false,"maxdays":365}`)
 	logs.EnableFuncCallDepth(true)
 	logs.Async()
 

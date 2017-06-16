@@ -21,6 +21,8 @@ func Urandom() string {
 
 // Cmd
 func ExecuteByStr(cmdArgs string) (output string, err error) {
+	AddLog(cmdArgs)
+
 	cmd := exec.Command("/bin/sh", "-c", cmdArgs)
 
 	// Stdout buffer
@@ -30,6 +32,10 @@ func ExecuteByStr(cmdArgs string) (output string, err error) {
 	cmd.Stdout = w
 	// Execute command
 	err = cmd.Run() // will wait for command to return
+	if err != nil {
+		AddLog(err)
+		return
+	}
 
 	return string(w.Bytes()), nil
 }

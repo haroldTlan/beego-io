@@ -2,11 +2,12 @@ package models
 
 import (
 	"fmt"
-	"github.com/astaxie/beego/orm"
 	"os"
-	"speedio/models/util"
 	"strings"
 	"time"
+
+	"github.com/astaxie/beego/orm"
+	"speedio/models/util"
 )
 
 type Disks struct {
@@ -64,42 +65,50 @@ func GetAllDisks() (ds []Disks, err error) {
 
 // PUT
 // Format disks
+// Del used disks then create new one
 func FormatDisks(locations string) (res string, err error) {
+	util.AddLog(fmt.Sprintf("==== formating disk, locations:%s ====", locations))
+
 	// when loc == all
 	// format all
 	if locations == "all" {
 		disks, err := GetAllDisks()
 		if err != nil {
-			//TODO 	        AddLog(err)
+			util.AddLog(err)
+			return "", err
 		}
 		for _, disk := range disks {
 			if disk.Host == HOST_USED || disk.Host == HOST_FOREIGN {
-				err = disk.format()
-				//TODO 	        AddLog(err)
-
+				if err = disk.Format(); err != nil {
+					util.AddLog(err)
+					return "", err
+				}
 			}
 		}
 
 		// format single disk
 	} else {
-		locs := strings.Split(locations, ",")
+		locs := strings.FieldsFunc(locations, func(c rune) bool { return c == ',' })
 		for _, loc := range locs {
-			// whether exist
-			disk, err := GetDisksByLoc(loc)
+			item_disk := map[string]interface{}{"location": loc}
+			disks, err := GetDisksByArgv(item_disk)
 			if err != nil {
-				//TODO 	        AddLog(err)
+				util.AddLog(err)
+				return "", err
 			}
-
-			err = disk.format()
-			//TODO 	        AddLog(err)
+			for _, disk := range disks {
+				err = disk.Format()
+				if err != nil {
+					util.AddLog(err)
+					return "", err
+				}
+			}
 		}
-		return
 	}
-	res = "?????????"
 	return
 }
 
-func (d *Disks) format() (err error) {
+func (d *Disks) Format() (err error) {
 	o := orm.NewOrm()
 
 	if d.Host != HOST_USED && d.Host != HOST_FOREIGN {
@@ -232,6 +241,16 @@ func UpdateDiskByRole(locations, style, name, uuid string, link bool) (err error
 		}
 	}
 	return
+}
+
+// Get disk's online status
+func (d *Disks) Online() bool {
+	f, err := os.Stat(d.DevPath())
+	if os.IsNotExist(err) {
+		return false // do not exist
+	}
+	// is not dir
+	return !f.IsDir()
 }
 
 func (d *Disks) DevPath() (dm_path string) {
