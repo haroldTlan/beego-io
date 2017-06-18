@@ -30,6 +30,10 @@ type Disks struct {
 	Link      bool      `orm:"column(link)"                       json:"link"`
 }
 
+type Disk struct {
+	Disks
+}
+
 var (
 	DISKTYPE_SATA = "sata"
 	DISKTYPE_SAS  = "sas"
@@ -52,12 +56,13 @@ func init() {
 
 // GET
 // Get all disks
+// TODO need filter condition
 func GetAllDisks() (ds []Disks, err error) {
 	o := orm.NewOrm()
 
 	if _, err = o.QueryTable(new(Disks)).All(&ds); err != nil {
-		fmt.Printf("%+v\n\n!!!!!", err)
-		//TODO 	        AddLog(err)
+		util.AddLog(err)
+		return
 	}
 
 	return
@@ -71,15 +76,18 @@ func FormatDisks(locations string) (res string, err error) {
 
 	// when loc == all
 	// format all
+	var d Disk
 	if locations == "all" {
 		disks, err := GetAllDisks()
 		if err != nil {
 			util.AddLog(err)
 			return "", err
 		}
+
 		for _, disk := range disks {
 			if disk.Host == HOST_USED || disk.Host == HOST_FOREIGN {
-				if err = disk.Format(); err != nil {
+				d.Disks = disk
+				if err = d.Format(); err != nil {
 					util.AddLog(err)
 					return "", err
 				}
@@ -90,6 +98,7 @@ func FormatDisks(locations string) (res string, err error) {
 	} else {
 		locs := strings.FieldsFunc(locations, func(c rune) bool { return c == ',' })
 		for _, loc := range locs {
+			// lookup
 			item_disk := map[string]interface{}{"location": loc}
 			disks, err := GetDisksByArgv(item_disk)
 			if err != nil {
@@ -97,7 +106,8 @@ func FormatDisks(locations string) (res string, err error) {
 				return "", err
 			}
 			for _, disk := range disks {
-				err = disk.Format()
+				d.Disks = disk
+				err = d.Format()
 				if err != nil {
 					util.AddLog(err)
 					return "", err
@@ -105,16 +115,22 @@ func FormatDisks(locations string) (res string, err error) {
 			}
 		}
 	}
+	util.AddLog(fmt.Sprintf("==== complete formating disk, locations:%s ====", locations))
 	return
 }
 
-func (d *Disks) Format() (err error) {
+// Disks format
+func (d *Disk) Format() (err error) {
 	o := orm.NewOrm()
 
 	if d.Host != HOST_USED && d.Host != HOST_FOREIGN {
 		err = fmt.Errorf("need not format")
-		//TODO 	        AddLog(err)
+		util.AddLog(err)
+		return err
 	}
+
+	// remove dev
+	d.RemoveDev()
 
 	// init old disk
 	dd := make([]string, 0)
@@ -140,14 +156,53 @@ func (d *Disks) Format() (err error) {
 		//TODO          AddLog(err)
 		return
 	}
-
 	return
 }
 
-func removeDev() {
+func (d *Disk) RemoveDev() (err error) {
+	dmPath := fmt.Sprintf("/dev/mapper/s%s", d.DevName)
+
+	if _, err = os.Stat(dmPath); err == nil {
+		if err = dmremove(dmPath); err != nil {
+			return
+		}
+	}
+	return
 }
 
-func (d *Disks) initNewDisk() (err error) {
+func dmremove(path string) (err error) {
+	cmd := fmt.Sprintf("dmsetup remove %s", path)
+	if _, err = util.ExecuteByStr(cmd); err != nil {
+		return
+	}
+
+	if err = ensure_not_exist(path); err != nil {
+		return
+	}
+	return
+}
+
+func ensure_not_exist(path string) (err error) {
+	time.Sleep(100 * time.Millisecond)
+	for i := 0; i < 120; i++ {
+		if _, err = os.Stat(path); os.IsNotExist(err) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if _, err = os.Stat(path); err == nil {
+		util.AddLog("ensure " + path + " not exist error")
+		return
+	}
+	return
+}
+
+func RemovePart(dev string) {
+
+}
+
+func (d *Disk) initNewDisk() (err error) {
 	//log.info('init new disk %s(%s)...' % (self.location, self.dev_name))
 	//speedio INFO init new disk 1.1.7(sde)...
 
@@ -188,7 +243,6 @@ func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}
 				locs := strings.FieldsFunc(v.(string), func(c rune) bool { return c == ',' }) //Dangerous
 				for _, loc := range locs {
 					if exist := o.QueryTable(new(Disks)).Filter(k, loc).Exist(); !exist {
-						//TODO          AddLog(err)
 						err = fmt.Errorf("not exist")
 						util.AddLog(err)
 						return
@@ -203,14 +257,13 @@ func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}
 				}
 			default:
 				if exist := o.QueryTable(new(Disks)).Filter(k, v).Exist(); !exist {
-					//TODO          AddLog(err)
 					err = fmt.Errorf("not exist")
 					util.AddLog(err)
 					return
 				}
-				if _, err := o.QueryTable(new(Disks)).Filter(k, v).All(&d); err != nil {
-					//TODO          AddLog(err)
+				if _, err = o.QueryTable(new(Disks)).Filter(k, v).All(&d); err != nil {
 					util.AddLog(err)
+					return
 				}
 			}
 		}
@@ -225,26 +278,31 @@ func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}
 func UpdateDiskByRole(locations, style, name, uuid string, link bool) (err error) {
 	o := orm.NewOrm()
 
-	loc := strings.Split(locations, ",")
-	for _, l := range loc {
-		d, err := GetDisksByLoc(l)
-		if err != nil {
-			//TODO          AddLog(err)
-		}
+	item_disk := map[string]interface{}{"location": locations}
+	disks, err := GetDisksByArgv(item_disk)
+	if err != nil {
+		util.AddLog(err)
+		return err
+	}
+	fmt.Printf("%+v", disks)
+	//loc := strings.Split(locations, ",")
+	for _, d := range disks {
+
 		d.Role = style
 		d.Raid = name
 		d.RaidId = uuid
 		d.Updated = time.Now()
 		d.Link = link
 		if _, err := o.Update(&d); err != nil {
-			//TODO          AddLog(err)
+			util.AddLog(err)
+			return err
 		}
 	}
 	return
 }
 
 // Get disk's online status
-func (d *Disks) Online() bool {
+func (d *Disk) Online() bool {
 	f, err := os.Stat(d.DevPath())
 	if os.IsNotExist(err) {
 		return false // do not exist
@@ -253,7 +311,7 @@ func (d *Disks) Online() bool {
 	return !f.IsDir()
 }
 
-func (d *Disks) DevPath() (dm_path string) {
+func (d *Disk) DevPath() (dm_path string) {
 	dm_path = fmt.Sprintf("/dev/mapper/s%s", d.DevName)
 	if _, err := os.Stat(dm_path); os.IsNotExist(err) {
 		return fmt.Sprintf("/dev/%s", d.DevName)

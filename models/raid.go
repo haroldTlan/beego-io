@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/orm"
 	"speedio/models/util"
 )
@@ -33,8 +34,8 @@ type Raid struct {
 	Raids
 	Sync       bool
 	Cache      bool
-	RaidDisks  []Disks
-	SpareDisks []Disks
+	RaidDisks  []Disk
+	SpareDisks []Disk //resDisk
 }
 
 func init() {
@@ -81,16 +82,30 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 	r.Cache = cache
 	r.Chunk = 256
 
-	r.RaidDisks, err = GetDisksByArgv(map[string]interface{}{"location": raid})
+	// init RaidDisks
+	dataDisks, err := GetDisksByArgv(map[string]interface{}{"location": raid})
 	if err != nil {
 		util.AddLog(err)
 		return
 	}
 
-	r.SpareDisks, err = GetDisksByArgv(map[string]interface{}{"location": spare})
+	for _, disk := range dataDisks {
+		var d Disk
+		d.Disks = disk
+		r.RaidDisks = append(r.RaidDisks, d)
+	}
+
+	// init SpareDisks
+	spareDisks, err := GetDisksByArgv(map[string]interface{}{"location": spare})
 	if err != nil {
 		util.AddLog(err)
 		return
+	}
+
+	for _, disk := range spareDisks {
+		var d Disk
+		d.Disks = disk
+		r.SpareDisks = append(r.SpareDisks, d)
 	}
 
 	// Mdadm
@@ -102,7 +117,8 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 	//TODO create_ssd()
 	//TODO create_cache()
 
-	cmd_dd := fmt.Sprintf("dd if=/dev/zero of=%s bs=1M count=128 oflag=direct", r.OdevPath())
+	//cmd_dd := fmt.Sprintf("dd if=/dev/zero of=%s bs=1M count=128 oflag=direct", r.OdevPath())
+	cmd_dd := fmt.Sprintf("dd if=/dev/zero of=%s bs=1M count=128", r.OdevPath())
 	if _, err = util.ExecuteByStr(cmd_dd); err != nil {
 		return
 	}
@@ -145,6 +161,7 @@ func DelRaids(name string) (err error) {
 		return
 	}
 
+	var d Disk
 	item_disk := map[string]interface{}{"raid": name}
 	disks, err := GetDisksByArgv(item_disk)
 	if err != nil {
@@ -172,8 +189,9 @@ func DelRaids(name string) (err error) {
 	}
 
 	for _, disk := range disks {
-		if disk.Online() {
-			cmd := fmt.Sprintf("mdadm --zero-superblock %s", disk.DevPath())
+		d.Disks = disk
+		if d.Online() {
+			cmd := fmt.Sprintf("mdadm --zero-superblock %s", d.DevPath())
 			if _, err = util.ExecuteByStr(cmd); err != nil {
 				return
 			}
@@ -338,7 +356,9 @@ func (r *Raid) mdadmCreate() (err error) {
 		sync = "--assume-clean"
 	}
 
-	bitmap := r.Id + ".bitmap"
+	bitmapFile := beego.AppConfig.String("bitmapfile")
+	//bitmapFile := "/home/zonion/bitmap/"
+	bitmap := bitmapFile + r.Id + ".bitmap"
 
 	//TODO	homehost := "speedio"
 	//TODO chunk
@@ -352,12 +372,12 @@ func (r *Raid) mdadmCreate() (err error) {
 			r.DevPath(), mdadmUuid, level, count, strings.Join(raid_disk_paths, " "), r.Name)
 	} else if r.Level == 1 || r.Level == 10 {
 		cmd = fmt.Sprintf("mdadm --create %s --homehost=\"speedio\" --uuid=\"%s\" --level=%s "+
-			"--chunk=256 --raid-disks=%s %s --run %s --force -q --name=\"%s\" --bitmap=/home/zonion/bitmap/%s --bitmap-chunk=16M",
+			"--chunk=256 --raid-disks=%s %s --run %s --force -q --name=\"%s\" --bitmap=%s --bitmap-chunk=16M",
 			r.DevPath(), mdadmUuid, level, count, strings.Join(raid_disk_paths, " "), sync, r.Name, bitmap)
 
 	} else {
 		cmd = fmt.Sprintf("mdadm --create %s --homehost=\"speedio\" --uuid=\"%s\" --level=%s "+
-			"--chunk=256 --raid-disks=%s %s --run %s --force -q --name=\"%s\" --bitmap=/home/zonion/bitmap/%s --bitmap-chunk=16M --layout=left-symmetric",
+			"--chunk=256 --raid-disks=%s %s --run %s --force -q --name=\"%s\" --bitmap=%s --bitmap-chunk=16M --layout=left-symmetric",
 			r.DevPath(), mdadmUuid, level, count, strings.Join(raid_disk_paths, " "), sync, r.Name, bitmap)
 	}
 
@@ -378,6 +398,7 @@ func (r *Raid) mdadmCreate() (err error) {
 }
 
 // Get raid's online status
+// Whether exist and not a directory
 func (r *Raid) Online() bool {
 	f, err := os.Stat(r.DevPath())
 	if os.IsNotExist(err) {

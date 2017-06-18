@@ -9,13 +9,14 @@ import (
 )
 
 func main() {
-	//a, err := os.Stat("/dev/sda")
-	a, err := os.Stat("/dev/md0")
-	if os.IsNotExist(err) {
+	_, err := os.Stat("/dev/sdaf")
+	fmt.Println(err)
+	//	a, err := os.Stat("/dev/md0")
+	if !os.IsExist(err) {
 		// path/to/whatever does not exist
 		fmt.Println(err)
 	}
-	fmt.Printf("%+v", a.IsDir(), err)
+	//fmt.Printf("%+v", a.IsDir(), err)
 	//fmt.Println(_next_dev_name())
 	//fmt.Println("\n", a, b, "\n", c, d, "\n", filepath.SplitList("/dev/md?*"))
 	//fmt.Println(_next_dev_name())
