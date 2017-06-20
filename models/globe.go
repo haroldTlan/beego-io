@@ -1,6 +1,8 @@
 package models
 
 var (
+	HOST_NATIVE = "native"
+
 	HEALTH_DEGRADED = "degraded"
 	HEALTH_DOWN     = "down"
 	HEALTH_FAILED   = "failed"

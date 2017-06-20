@@ -17,7 +17,7 @@ func main() {
 		fmt.Println(err)
 	}
 	//fmt.Printf("%+v", a.IsDir(), err)
-	//fmt.Println(_next_dev_name())
+	fmt.Println(_next_dev_name())
 	//fmt.Println("\n", a, b, "\n", c, d, "\n", filepath.SplitList("/dev/md?*"))
 	//fmt.Println(_next_dev_name())
 }

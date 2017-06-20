@@ -1,11 +1,17 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"time"
 )
 
 func main() {
-	fmt.Println("vim-go")
-	fmt.Println(time.Now())
+	start := time.Now()
+
+	//r := new(big.Int)
+	//fmt.Println(r.Binomial(1000, 10))
+	time.Sleep(2 * time.Second)
+
+	elapsed := time.Since(start)
+	log.Printf("Binomial took %s", elapsed)
 }

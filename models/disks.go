@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/astaxie/beego/orm"
+	"speedio/models/lm"
 	"speedio/models/util"
 )
 
-type Disks struct {
+type DbDisk struct {
 	Id        string    `orm:"column(uuid);size(255);pk"          json:"uuid"`
 	Created   time.Time `orm:"column(created_at);type(datetime)"  json:"created_at"`
 	Updated   time.Time `orm:"column(updated_at);type(datetime)"  json:"updated_at"`
@@ -30,8 +31,12 @@ type Disks struct {
 	Link      bool      `orm:"column(link)"                       json:"link"`
 }
 
+func (d *DbDisk) TableName() string {
+	return "disks"
+}
+
 type Disk struct {
-	Disks
+	DbDisk
 }
 
 var (
@@ -39,7 +44,6 @@ var (
 	DISKTYPE_SAS  = "sas"
 	DISKTYPE_SSD  = "ssd"
 
-	HOST_NATIVE  = "native"
 	HOST_LOCAL   = "local" //db has no this disk's data, but metadata host uuid equal with storage
 	HOST_FOREIGN = "foreign"
 	HOST_USED    = "used"
@@ -51,21 +55,93 @@ var (
 )
 
 func init() {
-	orm.RegisterModel(new(Disks))
+	orm.RegisterModel(new(DbDisk))
+
+	// scan_all
+	util.AddLog("system start scan")
+	if util.CheckSystemRaid1() {
+		//	make_system_rd()
+		//	        check_system_rd()
+	}
+
+}
+
+func ScanAll() (err error) {
+	util.AddLog("disk scan...")
+	//disks, err := GetAllDisks()
+	disks, err := temp()
+	if err != nil {
+		util.AddLog(err)
+
+	}
+	for _, disk := range disks {
+		if disk.Host != HOST_NATIVE {
+			disk.Delete()
+		}
+	}
+	//TODO part
+
+	var m lm.LocationMapping
+	m.Init()
+	count := len(m.Mapping)
+	//fmt.Printf("%+v", m)a
+
+	for {
+		//	time.Sleep(16*time.Second)
+		time.Sleep(0 * time.Second)
+		m.Init()
+		if count == len(m.Mapping) {
+			break
+		}
+		count = len(m.Mapping)
+		util.AddLog("new disk online, wait again")
+	}
+	// TODO ssd
+
+	// Timer
+	start := time.Now()
+
+	util.AddLog(fmt.Sprintf("mapping: %s", m.Mapping))
+	if len(m.Mapping) == 0 {
+		err = fmt.Errorf("no any disks")
+		return
+	}
+
+	elapsed := time.Since(start)
+
+	cmd := "sync"
+	util.ExecuteByStr(cmd, false)
+	util.AddLog(fmt.Sprintf("scan all disks, cost:%s secs", elapsed))
+
+	return
+}
+
+func scanDisk() {
+
 }
 
 // GET
 // Get all disks
 // TODO need filter condition
-func GetAllDisks() (ds []Disks, err error) {
+func GetAllDisks() (ds []DbDisk, err error) {
+	ScanAll()
 	o := orm.NewOrm()
 
-	if _, err = o.QueryTable(new(Disks)).All(&ds); err != nil {
+	if _, err = o.QueryTable(new(DbDisk)).All(&ds); err != nil {
 		util.AddLog(err)
 		return
 	}
 
 	return
+}
+
+// DELETE
+// Delete disks
+func (d *DbDisk) Delete() {
+	o := orm.NewOrm()
+	if num, err := o.Delete(d); err == nil {
+		fmt.Println(num)
+	}
 }
 
 // PUT
@@ -86,7 +162,7 @@ func FormatDisks(locations string) (res string, err error) {
 
 		for _, disk := range disks {
 			if disk.Host == HOST_USED || disk.Host == HOST_FOREIGN {
-				d.Disks = disk
+				d.DbDisk = disk
 				if err = d.Format(); err != nil {
 					util.AddLog(err)
 					return "", err
@@ -106,7 +182,7 @@ func FormatDisks(locations string) (res string, err error) {
 				return "", err
 			}
 			for _, disk := range disks {
-				d.Disks = disk
+				d.DbDisk = disk
 				err = d.Format()
 				if err != nil {
 					util.AddLog(err)
@@ -152,7 +228,7 @@ func (d *Disk) Format() (err error) {
 	d.initNewDisk()
 
 	// Delete disk by uuid
-	if _, err = o.QueryTable(new(Disks)).Filter("uuid", d.Id).Delete(); err != nil {
+	if _, err = o.QueryTable(new(DbDisk)).Filter("uuid", d.Id).Delete(); err != nil {
 		//TODO          AddLog(err)
 		return
 	}
@@ -172,7 +248,7 @@ func (d *Disk) RemoveDev() (err error) {
 
 func dmremove(path string) (err error) {
 	cmd := fmt.Sprintf("dmsetup remove %s", path)
-	if _, err = util.ExecuteByStr(cmd); err != nil {
+	if _, err = util.ExecuteByStr(cmd, true); err != nil {
 		return
 	}
 
@@ -213,10 +289,10 @@ func (d *Disk) initNewDisk() (err error) {
 }
 
 // Use location to get disk's info
-func GetDisksByLoc(loc string) (d Disks, err error) {
+func GetDisksByLoc(loc string) (d DbDisk, err error) {
 	o := orm.NewOrm()
 
-	if err = o.QueryTable(new(Disks)).Filter("location", loc).One(&d); err != nil {
+	if err = o.QueryTable(new(DbDisk)).Filter("location", loc).One(&d); err != nil {
 		fmt.Printf("%+v\n\n!!!!!", err)
 		if err.Error() == "<QuerySeter> no row found" {
 			err = fmt.Errorf(" not exist")
@@ -231,7 +307,7 @@ func GetDisksByLoc(loc string) (d Disks, err error) {
 }
 
 // Get disks by any argv
-func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}) (d []Disks, err error) {
+func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}) (d []DbDisk, err error) {
 	o := orm.NewOrm()
 
 	if len(items) == 0 {
@@ -242,26 +318,26 @@ func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}
 			case "location":
 				locs := strings.FieldsFunc(v.(string), func(c rune) bool { return c == ',' }) //Dangerous
 				for _, loc := range locs {
-					if exist := o.QueryTable(new(Disks)).Filter(k, loc).Exist(); !exist {
+					if exist := o.QueryTable(new(DbDisk)).Filter(k, loc).Exist(); !exist {
 						err = fmt.Errorf("not exist")
 						util.AddLog(err)
 						return
 
 					}
-					var temp Disks
-					if err = o.QueryTable(new(Disks)).Filter(k, loc).One(&temp); err != nil {
+					var temp DbDisk
+					if err = o.QueryTable(new(DbDisk)).Filter(k, loc).One(&temp); err != nil {
 						util.AddLog(err)
 						return
 					}
 					d = append(d, temp)
 				}
 			default:
-				if exist := o.QueryTable(new(Disks)).Filter(k, v).Exist(); !exist {
+				if exist := o.QueryTable(new(DbDisk)).Filter(k, v).Exist(); !exist {
 					err = fmt.Errorf("not exist")
 					util.AddLog(err)
 					return
 				}
-				if _, err = o.QueryTable(new(Disks)).Filter(k, v).All(&d); err != nil {
+				if _, err = o.QueryTable(new(DbDisk)).Filter(k, v).All(&d); err != nil {
 					util.AddLog(err)
 					return
 				}
@@ -303,9 +379,10 @@ func UpdateDiskByRole(locations, style, name, uuid string, link bool) (err error
 
 // Get disk's online status
 func (d *Disk) Online() bool {
+	// path.exist
 	f, err := os.Stat(d.DevPath())
 	if os.IsNotExist(err) {
-		return false // do not exist
+		return false
 	}
 	// is not dir
 	return !f.IsDir()
@@ -315,6 +392,15 @@ func (d *Disk) DevPath() (dm_path string) {
 	dm_path = fmt.Sprintf("/dev/mapper/s%s", d.DevName)
 	if _, err := os.Stat(dm_path); os.IsNotExist(err) {
 		return fmt.Sprintf("/dev/%s", d.DevName)
+	}
+	return
+}
+
+func temp() (ds []DbDisk, err error) {
+	o := orm.NewOrm()
+	if _, err = o.QueryTable(new(DbDisk)).All(&ds); err != nil {
+		util.AddLog(err)
+		return
 	}
 	return
 }

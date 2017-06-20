@@ -14,7 +14,7 @@ import (
 	"speedio/models/util"
 )
 
-type Raids struct {
+type DbRaids struct {
 	Id              string    `orm:"column(uuid);size(255);pk"          json:"uuid"`
 	Created         time.Time `orm:"column(created_at);type(datetime)"  json:"created_at"`
 	Updated         time.Time `orm:"column(updated_at);type(datetime)"  json:"updated_at"`
@@ -30,8 +30,12 @@ type Raids struct {
 	Deleted         bool      `orm:"column(deleted)"				    json:"deleted"`
 }
 
+func (r *DbRaids) TableName() string {
+	return "raids"
+}
+
 type Raid struct {
-	Raids
+	DbRaids
 	Sync       bool
 	Cache      bool
 	RaidDisks  []Disk
@@ -39,16 +43,16 @@ type Raid struct {
 }
 
 func init() {
-	orm.RegisterModel(new(Raids))
+	orm.RegisterModel(new(DbRaids))
 }
 
 // GET
 // Get all raids
-func GetAllRaids() (rs []Raids, err error) {
+func GetAllRaids() (rs []DbRaids, err error) {
 	o := orm.NewOrm()
-	rs = make([]Raids, 0)
+	rs = make([]DbRaids, 0)
 
-	if _, err = o.QueryTable(new(Raids)).All(&rs); err != nil {
+	if _, err = o.QueryTable(new(DbRaids)).All(&rs); err != nil {
 		util.AddLog(err)
 		return
 	}
@@ -91,7 +95,7 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 
 	for _, disk := range dataDisks {
 		var d Disk
-		d.Disks = disk
+		d.DbDisk = disk
 		r.RaidDisks = append(r.RaidDisks, d)
 	}
 
@@ -104,7 +108,7 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 
 	for _, disk := range spareDisks {
 		var d Disk
-		d.Disks = disk
+		d.DbDisk = disk
 		r.SpareDisks = append(r.SpareDisks, d)
 	}
 
@@ -119,19 +123,19 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 
 	//cmd_dd := fmt.Sprintf("dd if=/dev/zero of=%s bs=1M count=128 oflag=direct", r.OdevPath())
 	cmd_dd := fmt.Sprintf("dd if=/dev/zero of=%s bs=1M count=128", r.OdevPath())
-	if _, err = util.ExecuteByStr(cmd_dd); err != nil {
+	if _, err = util.ExecuteByStr(cmd_dd, true); err != nil {
 		return
 	}
 
 	cmd_pvcreate := fmt.Sprintf("pvcreate %s -ff -y --metadatacopies 1", r.OdevPath())
-	if _, err = util.ExecuteByStr(cmd_pvcreate); err != nil {
+	if _, err = util.ExecuteByStr(cmd_pvcreate, true); err != nil {
 		return
 	}
 
 	r.joinVg()
 	r.updateExtents()
 
-	if _, err = o.Insert(&r.Raids); err != nil {
+	if _, err = o.Insert(&r.DbRaids); err != nil {
 		util.AddLog(err)
 		return
 	}
@@ -177,22 +181,22 @@ func DelRaids(name string) (err error) {
 			}
 
 			cmd := fmt.Sprintf("pvremove %s", r.OdevPath())
-			if _, err = util.ExecuteByStr(cmd); err != nil {
+			if _, err = util.ExecuteByStr(cmd, true); err != nil {
 				return
 			}
 
 		}
 		cmd := fmt.Sprintf("mdadm --stop %s", r.DevPath())
-		if _, err = util.ExecuteByStr(cmd); err != nil {
+		if _, err = util.ExecuteByStr(cmd, true); err != nil {
 			return
 		}
 	}
 
 	for _, disk := range disks {
-		d.Disks = disk
+		d.DbDisk = disk
 		if d.Online() {
 			cmd := fmt.Sprintf("mdadm --zero-superblock %s", d.DevPath())
-			if _, err = util.ExecuteByStr(cmd); err != nil {
+			if _, err = util.ExecuteByStr(cmd, true); err != nil {
 				return
 			}
 		}
@@ -200,7 +204,7 @@ func DelRaids(name string) (err error) {
 
 	devDir := fmt.Sprintf("/dev/%s", r.VgName())
 	cmd := fmt.Sprintf("rm %s -rf", devDir)
-	if _, err = util.ExecuteByStr(cmd); err != nil {
+	if _, err = util.ExecuteByStr(cmd, true); err != nil {
 		return
 	}
 
@@ -236,7 +240,7 @@ func _DelRaids(name string) (err error) {
 		util.AddLog(err)
 		return
 	}
-	if _, err = o.Delete(&r.Raids); err != nil {
+	if _, err = o.Delete(&r.DbRaids); err != nil {
 		util.AddLog(err)
 		return
 	}
@@ -246,7 +250,7 @@ func _DelRaids(name string) (err error) {
 // detachVg
 func (r *Raid) detachVg() (err error) {
 	cmd := "vgs -o pv_count"
-	output, err := util.ExecuteByStr(cmd)
+	output, err := util.ExecuteByStr(cmd, true)
 	if err != nil {
 		return
 	}
@@ -258,7 +262,7 @@ func (r *Raid) detachVg() (err error) {
 	} else {
 		_cmd = fmt.Sprintf("vgremove %s %s", r.VgName(), r.OdevPath())
 	}
-	if _, err = util.ExecuteByStr(_cmd); err != nil {
+	if _, err = util.ExecuteByStr(_cmd, true); err != nil {
 		return
 	}
 
@@ -276,17 +280,17 @@ func GetRaidsByArgv(item map[string]interface{}, items ...map[string]interface{}
 
 	if len(items) == 0 {
 		for k, v := range item {
-			if exist := o.QueryTable(new(Raids)).Filter(k, v).Exist(); !exist {
+			if exist := o.QueryTable(new(DbRaids)).Filter(k, v).Exist(); !exist {
 				err = fmt.Errorf("not exist")
 				util.AddLog(err)
 				return
 			}
-			var raid Raids
-			if err = o.QueryTable(new(Raids)).Filter(k, v).One(&raid); err != nil {
+			var raid DbRaids
+			if err = o.QueryTable(new(DbRaids)).Filter(k, v).One(&raid); err != nil {
 				util.AddLog(err)
 				return
 			}
-			r.Raids = raid
+			r.DbRaids = raid
 		}
 	}
 	// when items > 0 TODO
@@ -299,7 +303,7 @@ func GetRaidsByArgv(item map[string]interface{}, items ...map[string]interface{}
 func (r *Raid) updateExtents() (err error) {
 	if r.Health() == HEALTH_DEGRADED || r.Health() == HEALTH_NORMAL {
 		cmd := fmt.Sprintf("pvs %s -o pv_pe_alloc_count,pv_pe_count", r.OdevPath())
-		output, _ := util.ExecuteByStr(cmd)
+		output, _ := util.ExecuteByStr(cmd, true)
 
 		caps := strings.Fields(output)
 
@@ -314,7 +318,7 @@ func (r *Raid) updateExtents() (err error) {
 // Join Vg
 func (r *Raid) joinVg() (err error) {
 	cmd := "vgs -o vg_name"
-	output, _ := util.ExecuteByStr(cmd)
+	output, _ := util.ExecuteByStr(cmd, true)
 
 	vgsMap := make(map[string]bool, 0)
 	for _, vgs := range strings.Fields(output) {
@@ -324,12 +328,12 @@ func (r *Raid) joinVg() (err error) {
 	// when vgName in output
 	if ok := vgsMap[r.VgName()]; ok {
 		cmd := fmt.Sprintf("vgextend %s %s", r.VgName(), r.OdevPath())
-		if _, err = util.ExecuteByStr(cmd); err != nil {
+		if _, err = util.ExecuteByStr(cmd, true); err != nil {
 			return
 		}
 	} else {
 		cmd := fmt.Sprintf("vgcreate -s 1024m %s %s", r.VgName(), r.OdevPath())
-		if _, err = util.ExecuteByStr(cmd); err != nil {
+		if _, err = util.ExecuteByStr(cmd, true); err != nil {
 			return
 		}
 	}
@@ -381,7 +385,7 @@ func (r *Raid) mdadmCreate() (err error) {
 			r.DevPath(), mdadmUuid, level, count, strings.Join(raid_disk_paths, " "), sync, r.Name, bitmap)
 	}
 
-	if _, err = util.ExecuteByStr(cmd); err != nil {
+	if _, err = util.ExecuteByStr(cmd, true); err != nil {
 		return
 	}
 
@@ -411,14 +415,15 @@ func (r *Raid) Online() bool {
 // Get raid's health
 func (r *Raid) Health() string {
 	cmd := fmt.Sprintf("mdadm --detail %s", r.DevPath())
-	output, err := util.ExecuteByStr(cmd)
+	output, err := util.ExecuteByStr(cmd, true)
 	if err != nil {
 		return HEALTH_FAILED
 	}
 
-	re := regexp.MustCompile("State :\\s+([^\n]+)")
+	re := regexp.MustCompile(`State :\s+([^\n]+)`)
 	segs := re.FindAllString(output, -1)
 
+	// split by ":"
 	status := strings.FieldsFunc(segs[0], func(c rune) bool { return c == ':' })
 	sMap := make(map[string]bool, 0)
 	for _, s := range status {
@@ -442,12 +447,12 @@ func (r *Raid) active_rebuild_priority() (err error) {
 
 	if len(r.RaidDisks) < 12 {
 		cmd := fmt.Sprintf("echo 20480 > /sys/block/%s/md/stripe_cache_size", r.DevName)
-		if _, err = util.ExecuteByStr(cmd); err != nil {
+		if _, err = util.ExecuteByStr(cmd, true); err != nil {
 			return
 		}
 	}
 	cmd := fmt.Sprintf("echo 0 > /sys/block/%s/md/preread_bypass_threshold", r.DevName)
-	if _, err = util.ExecuteByStr(cmd); err != nil {
+	if _, err = util.ExecuteByStr(cmd, true); err != nil {
 		return
 	}
 
@@ -458,7 +463,7 @@ func (r *Raid) active_rebuild_priority() (err error) {
 // TODO now when partitions=0
 func (r *Raid) _clean_existed_partition() (err error) {
 	cmd := fmt.Sprintf("blockdev --rereadpt %s", r.DevPath())
-	if _, err = util.ExecuteByStr(cmd); err != nil {
+	if _, err = util.ExecuteByStr(cmd, true); err != nil {
 		return
 	}
 

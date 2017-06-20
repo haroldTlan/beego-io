@@ -3,10 +3,13 @@ package util
 import (
 	"bytes"
 	"fmt"
-	"github.com/astaxie/beego/logs"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
+	"strings"
+
+	"github.com/astaxie/beego/logs"
 )
 
 // Uuid created
@@ -20,9 +23,10 @@ func Urandom() string {
 }
 
 // Cmd
-func ExecuteByStr(cmdArgs string) (output string, err error) {
-	AddLog(cmdArgs)
-
+func ExecuteByStr(cmdArgs string, logging bool) (output string, err error) {
+	if logging {
+		AddLog(cmdArgs)
+	}
 	cmd := exec.Command("/bin/sh", "-c", cmdArgs)
 
 	// Stdout buffer
@@ -63,4 +67,22 @@ func AddLog(err interface{}, v ...interface{}) {
 	} else {
 		logs.Info("[Server] ", err)
 	}
+}
+
+func CheckSystemRaid1() bool {
+	o, err := ExecuteByStr(`df |grep md0`, false)
+	if err != nil {
+		AddLog(err)
+		return false
+	}
+	o = strings.TrimSpace(o)
+
+	for _, n := range strings.Split(o, "\n") {
+		m := regexp.MustCompile(`/dev/md0`)
+		if m.MatchString(n) {
+			return true
+		}
+	}
+
+	return false
 }
