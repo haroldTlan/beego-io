@@ -3,6 +3,7 @@ package util
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"regexp"
@@ -36,8 +37,10 @@ func ExecuteByStr(cmdArgs string, logging bool) (output string, err error) {
 	cmd.Stdout = w
 	// Execute command
 	err = cmd.Run() // will wait for command to return
-	if err != nil {
+	if err != nil && logging {
 		AddLog(err)
+		return
+	} else if err != nil && !logging {
 		return
 	}
 
@@ -66,6 +69,34 @@ func AddLog(err interface{}, v ...interface{}) {
 		logs.Error("[Server] ", runtime.FuncForPC(pc).Name(), line, v, err)
 	} else {
 		logs.Info("[Server] ", err)
+	}
+}
+
+// Read file
+func ReadFile(path string) string {
+	fi, err := os.Open(path)
+	if err != nil {
+		AddLog(err)
+	}
+	defer fi.Close()
+	fd, err := ioutil.ReadAll(fi)
+	if err != nil {
+		AddLog(err)
+	}
+	return string(fd)
+}
+
+// Write file
+func WriteFile(path, str string) {
+	pipe := []byte(str)
+	fi, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0660)
+	if err != nil {
+		panic(err)
+	}
+	defer fi.Close()
+	err = ioutil.WriteFile(path, pipe, 0666)
+	if err != nil {
+		panic(err)
 	}
 }
 

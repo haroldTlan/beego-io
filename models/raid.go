@@ -14,49 +14,84 @@ import (
 	"speedio/models/util"
 )
 
-type DbRaids struct {
-	Id              string    `orm:"column(uuid);size(255);pk"          json:"uuid"`
-	Created         time.Time `orm:"column(created_at);type(datetime)"  json:"created_at"`
-	Updated         time.Time `orm:"column(updated_at);type(datetime)"  json:"updated_at"`
-	Name            string    `orm:"column(name);size(255)"		        json:"name"`
-	Level           int       `orm:"column(level)"					    json:"level"`
-	Chunk           int       `orm:"column(chunk_kb)"					json:"chunk_kb"`
-	Health          string    `orm:"column(health);size(255)"           json:"health"`
-	Cap             int       `orm:"column(cap)"					    json:"cap"`
-	UsedCap         int       `orm:"column(used_cap)"				    json:"used_cap"`
-	RebuildProgress int       `orm:"column(rebuild_progress)"           json:"rebuild_progress"`
-	Rebuilding      bool      `orm:"column(rebuilding)"				    json:"rebuilding"`
-	DevName         string    `orm:"column(dev_name);size(255)"         json:"dev_name"`
-	Deleted         bool      `orm:"column(deleted)"				    json:"deleted"`
+type DbRaid struct {
+	Id         string    `orm:"column(uuid);size(255);pk"           json:"uuid"`
+	Created    time.Time `orm:"column(created_at);type(datetime)"   json:"created_at"`
+	Updated    time.Time `orm:"column(updated_at);type(datetime)"   json:"updated_at"`
+	Name       string    `orm:"column(name);size(255)"		        json:"name"`
+	Level      int64     `orm:"column(level)"					    json:"level"`
+	Chunk      int64     `orm:"column(chunk_kb)"					json:"chunk_kb"`
+	RbPriority string    `orm:"column(rebuild_priority);size(255)"  json:"rebuild_priority"`
+	Health     string    `orm:"column(health);size(255)"            json:"health"`
+	RdsNr      int64     `orm:"column(raid_disks_nr)"		        json:"raid_disks_nr"`
+	SdsNr      int64     `orm:"column(spare_disks_nr)"		        json:"spare_disks_nr"`
+	Cap        int64     `orm:"column(cap)"					        json:"cap"`
+	UsedCap    int64     `orm:"column(used_cap)"				    json:"used_cap"`
+	DevName    string    `orm:"column(dev_name);size(255)"          json:"dev_name"`
+	OdevName   string    `orm:"column(odev_name);size(255)"         json:"odev_name"`
+	Deleted    bool      `orm:"column(deleted)"				        json:"deleted"`
+	Disks      []*DbDisk `orm:"column(Id);reverse(many)"			json:"disks"`
 }
 
-func (r *DbRaids) TableName() string {
+func (r *DbRaid) TableName() string {
 	return "raids"
 }
 
 type Raid struct {
-	DbRaids
+	DbRaid
 	Sync       bool
 	Cache      bool
 	RaidDisks  []Disk
 	SpareDisks []Disk //resDisk
 }
 
+// output
+type ResRaid struct {
+	Rb         bool    `json:"rebuilding"`
+	Uuid       string  `json:"id"`
+	Health     string  `json:"health"`
+	Level      int64   `json:"level"`
+	Name       string  `json:"name"`
+	Cap        int64   `json:"cap_sector"`
+	Used       int64   `json:"used_cap_sector"`
+	CapMb      float64 `json:"cap_mb"`
+	UsedMb     float64 `json:"used_cap_mb"`
+	ChunkKb    int     `json:"chunk_kb"`
+	Blkdev     string  `json:"blkdev"`
+	RbProgress float64 `json:"rebuild_progress"`
+	//rqr_count
+}
+
 func init() {
-	orm.RegisterModel(new(DbRaids))
+	orm.RegisterModel(new(DbRaid))
 }
 
 // GET
 // Get all raids
-func GetAllRaids() (rs []DbRaids, err error) {
+// TODO more condition to filter
+func GetAllRaids() (res []ResRaid, err error) {
 	o := orm.NewOrm()
-	rs = make([]DbRaids, 0)
+	res = make([]ResRaid, 0)
+	var rs []DbRaid
 
-	if _, err = o.QueryTable(new(DbRaids)).All(&rs); err != nil {
+	if _, err = o.QueryTable(new(DbRaid)).Filter("deleted", false).All(&rs); err != nil {
 		util.AddLog(err)
 		return
 	}
 
+	for _, raid := range rs {
+		var re ResRaid
+		re.Uuid = raid.Id
+		re.Level = raid.Level
+		re.Name = raid.Name
+		re.Cap = raid.Cap
+		re.Used = raid.UsedCap
+		re.Rb = false
+		re.RbProgress = 0
+		re.ChunkKb = 32
+		re.Health = "normal"
+		res = append(res, re)
+	}
 	return
 
 }
@@ -78,7 +113,7 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 	var r Raid
 	r.Id = uuid
 	r.Name = name
-	r.Level, _ = strconv.Atoi(level)
+	r.Level, _ = strconv.ParseInt(level, 10, 64)
 	r.DevName = devName
 	r.Created = time.Now()
 	r.Updated = time.Now()
@@ -92,6 +127,12 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 		util.AddLog(err)
 		return
 	}
+	r.RdsNr = int64(len(dataDisks))
+	/*dataDisks, err := r.RaidDisks(raid)
+	if err != nil {
+		util.AddLog(err)
+		return
+	}*/
 
 	for _, disk := range dataDisks {
 		var d Disk
@@ -105,6 +146,7 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 		util.AddLog(err)
 		return
 	}
+	r.SdsNr = int64(len(spareDisks))
 
 	for _, disk := range spareDisks {
 		var d Disk
@@ -121,7 +163,6 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 	//TODO create_ssd()
 	//TODO create_cache()
 
-	//cmd_dd := fmt.Sprintf("dd if=/dev/zero of=%s bs=1M count=128 oflag=direct", r.OdevPath())
 	cmd_dd := fmt.Sprintf("dd if=/dev/zero of=%s bs=1M count=128", r.OdevPath())
 	if _, err = util.ExecuteByStr(cmd_dd, true); err != nil {
 		return
@@ -135,20 +176,30 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 	r.joinVg()
 	r.updateExtents()
 
-	if _, err = o.Insert(&r.DbRaids); err != nil {
+	if _, err = o.Insert(&r.DbRaid); err != nil {
 		util.AddLog(err)
 		return
 	}
 
-	if err = UpdateDiskByRole(raid, ROLE_DATA, name, uuid, true); err != nil {
-		util.AddLog(err)
-		return
-	}
-	if err = UpdateDiskByRole(spare, ROLE_SPARE, name, uuid, true); err != nil {
-		util.AddLog(err)
-		return
+	diskRole := map[string]interface{}{"role": ROLE_DATA}
+	diskSpareRole := map[string]interface{}{"role": ROLE_DATA_SPARE}
+	diskUuid := map[string]interface{}{"raid": uuid}
+	diskLink := map[string]interface{}{"link": true}
+	for _, disk := range dataDisks {
+		if err = disk.Save(diskRole, diskUuid, diskLink); err != nil {
+			util.AddLog(err)
+			return
+		}
 	}
 
+	for _, disk := range spareDisks {
+		if err = disk.Save(diskSpareRole, diskUuid, diskLink); err != nil {
+			util.AddLog(err)
+			return
+		}
+	}
+
+	util.AddLog(fmt.Sprintf("Raid %s is created successfully.", name))
 	//	log.journal_info('Raid %s is created successfully.' % self.name,\
 	//	                         '成功建立阵列 %s' % self.name.encode('utf8'))
 	return
@@ -157,6 +208,7 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 // DELETE
 // Delete Raid
 func DelRaids(name string) (err error) {
+	o := orm.NewOrm()
 
 	item_raid := map[string]interface{}{"name": name}
 	r, err := GetRaidsByArgv(item_raid)
@@ -165,10 +217,8 @@ func DelRaids(name string) (err error) {
 		return
 	}
 
-	var d Disk
-	item_disk := map[string]interface{}{"raid": name}
-	disks, err := GetDisksByArgv(item_disk)
-	if err != nil {
+	// get foreign keys
+	if _, err = o.LoadRelated(&r.DbRaid, "Disks"); err != nil {
 		util.AddLog(err)
 		return
 	}
@@ -184,16 +234,17 @@ func DelRaids(name string) (err error) {
 			if _, err = util.ExecuteByStr(cmd, true); err != nil {
 				return
 			}
-
 		}
+
 		cmd := fmt.Sprintf("mdadm --stop %s", r.DevPath())
 		if _, err = util.ExecuteByStr(cmd, true); err != nil {
 			return
 		}
 	}
 
-	for _, disk := range disks {
-		d.DbDisk = disk
+	var d Disk
+	for _, disk := range r.Disks {
+		d.DbDisk = *disk
 		if d.Online() {
 			cmd := fmt.Sprintf("mdadm --zero-superblock %s", d.DevPath())
 			if _, err = util.ExecuteByStr(cmd, true); err != nil {
@@ -210,45 +261,50 @@ func DelRaids(name string) (err error) {
 
 	err = _DelRaids(name)
 	if err != nil {
+		util.AddLog(err)
 		return
 	}
 	return
 }
 
-// Delete raid from sqlite
+// update raid from sqlite(deleted=true)
 func _DelRaids(name string) (err error) {
 	o := orm.NewOrm()
 
 	item_raid := map[string]interface{}{"name": name}
-	item_disk := map[string]interface{}{"raid": name}
-
-	disks, err := GetDisksByArgv(item_disk)
-	if err != nil {
-		util.AddLog(err)
-		return
-	}
-
-	for _, d := range disks {
-		if err = UpdateDiskByRole(d.Loc, ROLE_UNUSED, "", "", false); err != nil {
-			util.AddLog(err)
-			return
-		}
-	}
-
 	r, err := GetRaidsByArgv(item_raid)
 	if err != nil {
 		util.AddLog(err)
 		return
 	}
-	if _, err = o.Delete(&r.DbRaids); err != nil {
+
+	// get foreign keys
+	if _, err = o.LoadRelated(&r.DbRaid, "Disks"); err != nil {
 		util.AddLog(err)
 		return
 	}
+
+	diskRole := map[string]interface{}{"role": ROLE_UNUSED}
+	diskUuid := map[string]interface{}{"raid": nil}
+	diskLink := map[string]interface{}{"link": false}
+	for _, disk := range r.Disks {
+		if err = disk.Save(diskRole, diskUuid, diskLink); err != nil {
+			util.AddLog(err)
+			return
+		}
+	}
+
+	r.DbRaid.Save(map[string]interface{}{"deleted": true})
+	/*r.DbRaid.Deleted = true
+	if _, err = o.Update(&r.DbRaid); err != nil {
+		util.AddLog(err)
+		return
+	}*/
 	return
 }
 
-// detachVg
-func (r *Raid) detachVg() (err error) {
+// DelRaids
+func (r *DbRaid) detachVg() (err error) {
 	cmd := "vgs -o pv_count"
 	output, err := util.ExecuteByStr(cmd, true)
 	if err != nil {
@@ -269,28 +325,176 @@ func (r *Raid) detachVg() (err error) {
 	return
 }
 
-// PUT
-// Update Raid's status
-func UpdateRaid() (err error) {
+// UPDATE
+// Save raid
+// Update Raid's infos
+func (r *DbRaid) Save(item map[string]interface{}, items ...map[string]interface{}) (err error) {
+	o := orm.NewOrm()
+
+	if len(items) == 0 {
+		//TODO k,v checking
+		r._Save(item)
+		r.Updated = time.Now()
+		if _, err = o.Update(r); err != nil {
+			util.AddLog(err)
+			return
+		}
+
+	} else if len(items) > 0 {
+		r._Save(item)
+		for _, i := range items {
+			r._Save(i)
+		}
+		r.Updated = time.Now()
+		if _, err = o.Update(r); err != nil {
+			util.AddLog(err)
+			return
+		}
+	}
+
 	return
 }
 
+func (r *DbRaid) _Save(item map[string]interface{}) {
+	for k, v := range item {
+		switch k {
+		case "health":
+			r.Health = v.(string)
+		case "used_cap":
+			r.UsedCap = v.(int64)
+		case "odev_name":
+			r.OdevName = v.(string)
+		case "deleted":
+			r.Deleted = v.(bool)
+		}
+	}
+}
+
+// Get raid disks
+func (r *DbRaid) RaidDisks(raid string) (disks []DbDisk, err error) {
+	disks, err = GetDisksByArgv(map[string]interface{}{"location": raid})
+	if err != nil {
+		util.AddLog(err)
+		return
+	}
+
+	return
+}
+
+// Get spare disks
+func (r *DbRaid) SpareDisks(spare string) (disks []DbDisk, err error) {
+	disks, err = GetDisksByArgv(map[string]interface{}{"location": spare})
+	if err != nil {
+		util.AddLog(err)
+		return
+	}
+	return
+}
+
+// Get all disks in raid
+func (r *DbRaid) AllDisks() (disks []*DbDisk) {
+	o := orm.NewOrm()
+
+	// get foreign keys
+	if _, err := o.LoadRelated(&r, "Disks"); err != nil {
+		util.AddLog(err)
+		return
+	}
+	return r.Disks
+
+}
+
+// Has bitmap
+func (r *DbRaid) hasBitmap() bool {
+	filename := fmt.Sprintf("/sys/block/%s/md/bitmap/location", r.DevName)
+	f := util.ReadFile(filename)
+
+	return strings.TrimSpace(f) == "file"
+}
+
+// Create bitmap
+func (r *DbRaid) createBitmap() {
+	if r.supportBitmap() {
+		bitmapFile := beego.AppConfig.String("bitmapfile")
+		bitmapSize, _ := beego.AppConfig.Int("bitmapsize")
+
+		bitmap := bitmapFile + r.Id + ".bitmap"
+		cmd := fmt.Sprintf("mdadm --grow --bitmap=%s --bitmap-chunk=%sM %s", bitmap, bitmapSize, r.DevPath())
+		util.ExecuteByStr(cmd, true)
+	}
+}
+
+// Delete bitmap
+func (r *DbRaid) deleteBitmap() {
+	bitmapFile := beego.AppConfig.String("bitmapfile")
+	bitmap1 := bitmapFile + r.Id + ".bitmap"
+	bitmap2 := bitmapFile + ".disk/" + r.Id + ".bitmap"
+
+	if _, err := os.Stat(bitmap1); err == nil {
+		os.Remove(bitmap1)
+	}
+	if _, err := os.Stat(bitmap2); err == nil {
+		os.Remove(bitmap2)
+	}
+}
+
+// Support bitmap
+func (r *DbRaid) supportBitmap() bool {
+	lMap := make(map[int64]bool, 0)
+	for _, i := range []int64{1, 5, 10} {
+		lMap[i] = true
+	}
+	if ok := lMap[r.Level]; ok {
+		return true
+	}
+	return false
+}
+
+// Delete cache
+func (r *DbRaid) deleteCache() {
+	cacheEnabled, _ := beego.AppConfig.Bool("cache_enable")
+	if cacheEnabled {
+		dmremove(r.OdevPath())
+	}
+}
+
+// Create cache
+func (r *DbRaid) createCache() {
+	cacheEnabled, _ := beego.AppConfig.Bool("cacheenable")
+	raidcachememsize, _ := beego.AppConfig.Int("raid_cache_mem_size")
+	if !cacheEnabled {
+		cmd := fmt.Sprintf("blockdev --getsz %s", r.OdevPath())
+		size, err := util.ExecuteByStr(cmd, true)
+		if err != nil {
+			return
+		}
+		odev_name := "c" + r.DevName
+		rule := fmt.Sprintf("0 %s cache %s %s %s %s", strings.TrimSpace(size), r.OdevPath(), raidcachememsize, r.Chunk, r.RdsNr) //TODO
+
+		dmcreate(odev_name, rule)
+		r.Save(map[string]interface{}{"odev_name": odev_name})
+	}
+}
+
+// speedio lookup
+// return Raid
 func GetRaidsByArgv(item map[string]interface{}, items ...map[string]interface{}) (r Raid, err error) {
 	o := orm.NewOrm()
 
 	if len(items) == 0 {
 		for k, v := range item {
-			if exist := o.QueryTable(new(DbRaids)).Filter(k, v).Exist(); !exist {
+			if exist := o.QueryTable(new(DbRaid)).Filter(k, v).Exist(); !exist {
 				err = fmt.Errorf("not exist")
 				util.AddLog(err)
 				return
 			}
-			var raid DbRaids
-			if err = o.QueryTable(new(DbRaids)).Filter(k, v).One(&raid); err != nil {
+
+			var raid DbRaid
+			if err = o.QueryTable(new(DbRaid)).Filter(k, v).Filter("deleted", false).One(&raid); err != nil {
 				util.AddLog(err)
 				return
 			}
-			r.DbRaids = raid
+			r.DbRaid = raid
 		}
 	}
 	// when items > 0 TODO
@@ -307,8 +511,8 @@ func (r *Raid) updateExtents() (err error) {
 
 		caps := strings.Fields(output)
 
-		r.UsedCap, _ = strconv.Atoi(caps[len(caps)-2])
-		r.Cap, _ = strconv.Atoi(caps[len(caps)-1])
+		r.UsedCap, _ = strconv.ParseInt(caps[len(caps)-2], 10, 64)
+		r.Cap, _ = strconv.ParseInt(caps[len(caps)-1], 10, 64)
 
 	}
 	return
@@ -316,7 +520,7 @@ func (r *Raid) updateExtents() (err error) {
 
 // func AddRaids
 // Join Vg
-func (r *Raid) joinVg() (err error) {
+func (r *DbRaid) joinVg() (err error) {
 	cmd := "vgs -o vg_name"
 	output, _ := util.ExecuteByStr(cmd, true)
 
@@ -368,7 +572,7 @@ func (r *Raid) mdadmCreate() (err error) {
 	//TODO chunk
 	//TODO --bitmap-chunk
 	//TODO --layout
-	level := strconv.Itoa(r.Level)
+	level := strconv.FormatInt(r.Level, 10)
 	count := strconv.Itoa(len(raid_disk_paths))
 	if r.Level == 0 {
 		cmd = fmt.Sprintf("mdadm --create %s --homehost=\"speedio\" --uuid=\"%s\" --level=%s "+
@@ -403,7 +607,7 @@ func (r *Raid) mdadmCreate() (err error) {
 
 // Get raid's online status
 // Whether exist and not a directory
-func (r *Raid) Online() bool {
+func (r *DbRaid) Online() bool {
 	f, err := os.Stat(r.DevPath())
 	if os.IsNotExist(err) {
 		return false // do not exist
@@ -414,6 +618,7 @@ func (r *Raid) Online() bool {
 
 // Get raid's health
 func (r *Raid) Health() string {
+	time.Sleep(1 * time.Second)
 	cmd := fmt.Sprintf("mdadm --detail %s", r.DevPath())
 	output, err := util.ExecuteByStr(cmd, true)
 	if err != nil {
@@ -441,7 +646,7 @@ func (r *Raid) Health() string {
 	return HEALTH_FAILED
 }
 
-// func mdadmCreate
+// func mdadmCreate TODO change method
 func (r *Raid) active_rebuild_priority() (err error) {
 	//TODO min
 
@@ -461,7 +666,7 @@ func (r *Raid) active_rebuild_priority() (err error) {
 
 // func mdadmCreate
 // TODO now when partitions=0
-func (r *Raid) _clean_existed_partition() (err error) {
+func (r *DbRaid) _clean_existed_partition() (err error) {
 	cmd := fmt.Sprintf("blockdev --rereadpt %s", r.DevPath())
 	if _, err = util.ExecuteByStr(cmd, true); err != nil {
 		return
@@ -471,12 +676,12 @@ func (r *Raid) _clean_existed_partition() (err error) {
 }
 
 // Get vg name TODO
-func (r *Raid) VgName() string {
+func (r *DbRaid) VgName() string {
 	return "VG-" + r.Name
 }
 
 // Get raid's odev_path
-func (r *Raid) OdevPath() string {
+func (r *DbRaid) OdevPath() string {
 	if false {
 		//cache
 	}
@@ -488,7 +693,7 @@ func (r *Raid) OdevPath() string {
 }
 
 // Get raid's dev path
-func (r *Raid) DevPath() string {
+func (r *DbRaid) DevPath() string {
 	return "/dev/" + r.DevName
 }
 
@@ -513,4 +718,16 @@ func _next_dev_name() (string, error) {
 	}
 
 	return "md0", nil
+}
+
+func dmcreate(name string, rules string) {
+	tmpfile := "/tmp/" + name + ".rule"
+
+	cmd := fmt.Sprintf("dmsetup create %s %s", name, tmpfile)
+	util.ExecuteByStr(cmd, true)
+
+	dm_path := "/dev/mapper/" + name
+	ensureExist(dm_path)
+
+	os.Remove(tmpfile)
 }

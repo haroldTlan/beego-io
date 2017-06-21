@@ -12,31 +12,42 @@ import (
 )
 
 type DbDisk struct {
-	Id        string    `orm:"column(uuid);size(255);pk"          json:"uuid"`
-	Created   time.Time `orm:"column(created_at);type(datetime)"  json:"created_at"`
-	Updated   time.Time `orm:"column(updated_at);type(datetime)"  json:"updated_at"`
-	Loc       string    `orm:"column(location);size(255)"         json:"location"`
-	Ploc      string    `orm:"column(prev_location);size(255)"    json:"prev_location"`
-	Health    string    `orm:"column(health);size(255)"           json:"health"`
-	Role      string    `orm:"column(role);size(255)"             json:"role"`
-	Raid      string    `orm:"column(raid);size(255)"             json:"raid"`    //raid's name
-	RaidId    string    `orm:"column(raid_id);size(255)"          json:"raid_id"` //raid's uuid
-	Disktype  string    `orm:"column(disktype);size(255)"         json:"disktype"`
-	Vendor    string    `orm:"column(vendor);size(255)"           json:"vendor"`
-	Model     string    `orm:"column(model);size(255)"            json:"model"`
-	Host      string    `orm:"column(host);size(255)"             json:"host"`
-	Sn        string    `orm:"column(sn);size(255)"               json:"sn"`
-	CapSector int64     `orm:"column(cap_sector)"                 json:"cap_sector"`
-	DevName   string    `orm:"column(dev_name);size(255)"         json:"dev_name"`
-	Link      bool      `orm:"column(link)"                       json:"link"`
+	Id        string    `orm:"column(uuid);size(255);pk"               json:"uuid"`
+	Created   time.Time `orm:"column(created_at);type(datetime)"       json:"created_at"`
+	Updated   time.Time `orm:"column(updated_at);type(datetime)"       json:"updated_at"`
+	Loc       string    `orm:"column(location);size(255)"              json:"location"`
+	Ploc      string    `orm:"column(prev_location);size(255)"         json:"prev_location"`
+	Health    string    `orm:"column(health);size(255)"                json:"health"`
+	Role      string    `orm:"column(role);size(255)"                  json:"role"`
+	Raid      *DbRaid   `orm:"column(raid);size(255);rel(fk);null"     json:"raid"` //raid's uuid
+	Disktype  string    `orm:"column(disktype);size(255)"              json:"disktype"`
+	Vendor    string    `orm:"column(vendor);size(255)"                json:"vendor"`
+	Model     string    `orm:"column(model);size(255)"                 json:"model"`
+	Host      string    `orm:"column(host);size(255)"                  json:"host"`
+	Sn        string    `orm:"column(sn);size(255)"                    json:"sn"`
+	CapSector int64     `orm:"column(cap_sector)"                      json:"cap_sector"`
+	DevName   string    `orm:"column(dev_name);size(255)"              json:"dev_name"`
+	Link      bool      `orm:"column(link)"                            json:"link"`
+	//RaidId    string    `orm:"column(raid_id);size(255)"          json:"raid_id"` //raid's uuid
 }
 
-func (d *DbDisk) TableName() string {
-	return "disks"
+type ResDisk struct {
+	Uuid      string  `json:"id"`
+	Health    string  `json:"health"`
+	Role      string  `json:"role"`
+	Location  string  `json:"location"`
+	Raid      string  `json:"raid"`
+	CapSector int64   `json:"cap_sector"`
+	CapMb     float64 `json:"cap_mb"`
+	Vendor    string  `json:"vendor"`
+	Model     string  `json:"model"`
+	Sn        string  `json:"sn"`
+	//rpm,rqr_count
 }
 
 type Disk struct {
 	DbDisk
+	RaidId string `json:"raid_name"` //raid's name
 }
 
 var (
@@ -53,6 +64,10 @@ var (
 	//							    ROLE = ["unused", "data", "spare", "global spare"]
 
 )
+
+func (d *DbDisk) TableName() string {
+	return "disks"
+}
 
 func init() {
 	orm.RegisterModel(new(DbDisk))
@@ -84,7 +99,6 @@ func ScanAll() (err error) {
 	var m lm.LocationMapping
 	m.Init()
 	count := len(m.Mapping)
-	//fmt.Printf("%+v", m)a
 
 	for {
 		//	time.Sleep(16*time.Second)
@@ -123,13 +137,38 @@ func scanDisk() {
 // GET
 // Get all disks
 // TODO need filter condition
-func GetAllDisks() (ds []DbDisk, err error) {
+func GetRestDisks() (res []ResDisk, err error) {
 	ScanAll()
 	o := orm.NewOrm()
 
-	if _, err = o.QueryTable(new(DbDisk)).All(&ds); err != nil {
+	var ds []DbDisk
+	if _, err = o.QueryTable(new(DbDisk)).All(&ds); err != nil { //TODO
 		util.AddLog(err)
 		return
+	}
+
+	for _, disk := range ds {
+
+		var re ResDisk
+		re.Uuid = disk.Id
+		re.Health = disk.Health
+		re.Role = disk.Role
+		re.Location = disk.Loc
+		re.CapSector = disk.CapSector
+		re.CapMb = float64(disk.CapSector / 1024 / 1024 / 2)
+		re.Vendor = disk.Vendor
+		re.Model = disk.Model
+		re.Sn = disk.Sn
+		if disk.Raid == nil {
+			re.Raid = ""
+		} else {
+			// Get Foreign Key
+			if _, err = o.LoadRelated(&disk, "Raid"); err != nil {
+				util.AddLog(err)
+			}
+			re.Raid = disk.Raid.Name
+		}
+		res = append(res, re)
 	}
 
 	return
@@ -148,14 +187,15 @@ func (d *DbDisk) Delete() {
 // Format disks
 // Del used disks then create new one
 func FormatDisks(locations string) (res string, err error) {
+	o := orm.NewOrm()
 	util.AddLog(fmt.Sprintf("==== formating disk, locations:%s ====", locations))
 
 	// when loc == all
 	// format all
 	var d Disk
 	if locations == "all" {
-		disks, err := GetAllDisks()
-		if err != nil {
+		var disks []DbDisk
+		if _, err = o.QueryTable(new(DbDisk)).RelatedSel().All(&disks); err != nil { //TODO
 			util.AddLog(err)
 			return "", err
 		}
@@ -235,6 +275,7 @@ func (d *Disk) Format() (err error) {
 	return
 }
 
+// Disks format
 func (d *Disk) RemoveDev() (err error) {
 	dmPath := fmt.Sprintf("/dev/mapper/s%s", d.DevName)
 
@@ -246,6 +287,7 @@ func (d *Disk) RemoveDev() (err error) {
 	return
 }
 
+// Disks format
 func dmremove(path string) (err error) {
 	cmd := fmt.Sprintf("dmsetup remove %s", path)
 	if _, err = util.ExecuteByStr(cmd, true); err != nil {
@@ -258,6 +300,7 @@ func dmremove(path string) (err error) {
 	return
 }
 
+// Disks format
 func ensure_not_exist(path string) (err error) {
 	time.Sleep(100 * time.Millisecond)
 	for i := 0; i < 120; i++ {
@@ -270,6 +313,26 @@ func ensure_not_exist(path string) (err error) {
 	if _, err = os.Stat(path); err == nil {
 		util.AddLog("ensure " + path + " not exist error")
 		return
+	}
+	return
+}
+
+// Disks format
+func ensureExist(path string) (err error) {
+	time.Sleep(100 * time.Millisecond)
+	for i := 0; i < 120; i++ {
+		if _, err = os.Stat(path); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if _, err = os.Stat(path); err == nil {
+		util.ReadFile(path)
+		return
+	} else {
+		err = fmt.Errorf("ensure " + path + " exist error")
+		util.AddLog(err)
 	}
 	return
 }
@@ -293,7 +356,6 @@ func GetDisksByLoc(loc string) (d DbDisk, err error) {
 	o := orm.NewOrm()
 
 	if err = o.QueryTable(new(DbDisk)).Filter("location", loc).One(&d); err != nil {
-		fmt.Printf("%+v\n\n!!!!!", err)
 		if err.Error() == "<QuerySeter> no row found" {
 			err = fmt.Errorf(" not exist")
 			//TODO          AddLog(err)
@@ -307,7 +369,7 @@ func GetDisksByLoc(loc string) (d DbDisk, err error) {
 }
 
 // Get disks by any argv
-func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}) (d []DbDisk, err error) {
+func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}) (ds []DbDisk, err error) {
 	o := orm.NewOrm()
 
 	if len(items) == 0 {
@@ -329,7 +391,7 @@ func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}
 						util.AddLog(err)
 						return
 					}
-					d = append(d, temp)
+					ds = append(ds, temp)
 				}
 			default:
 				if exist := o.QueryTable(new(DbDisk)).Filter(k, v).Exist(); !exist {
@@ -337,7 +399,7 @@ func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}
 					util.AddLog(err)
 					return
 				}
-				if _, err = o.QueryTable(new(DbDisk)).Filter(k, v).All(&d); err != nil {
+				if _, err = o.QueryTable(new(DbDisk)).Filter(k, v).All(&ds); err != nil {
 					util.AddLog(err)
 					return
 				}
@@ -349,32 +411,57 @@ func GetDisksByArgv(item map[string]interface{}, items ...map[string]interface{}
 	return
 }
 
-// Update disk
-// When raid's status has changed
-func UpdateDiskByRole(locations, style, name, uuid string, link bool) (err error) {
+// UPDATE
+// Save disk
+// Update Disk's infos
+func (d *DbDisk) Save(item map[string]interface{}, items ...map[string]interface{}) (err error) {
 	o := orm.NewOrm()
 
-	item_disk := map[string]interface{}{"location": locations}
-	disks, err := GetDisksByArgv(item_disk)
-	if err != nil {
-		util.AddLog(err)
-		return err
-	}
-	fmt.Printf("%+v", disks)
-	//loc := strings.Split(locations, ",")
-	for _, d := range disks {
-
-		d.Role = style
-		d.Raid = name
-		d.RaidId = uuid
+	if len(items) == 0 {
+		//TODO k,v checking
+		d._Save(item)
 		d.Updated = time.Now()
-		d.Link = link
-		if _, err := o.Update(&d); err != nil {
+		if _, err = o.Update(&d); err != nil {
 			util.AddLog(err)
-			return err
+			return
+		}
+
+	} else if len(items) > 0 {
+		d._Save(item)
+		for _, i := range items {
+			d._Save(i)
+		}
+		d.Updated = time.Now()
+		if _, err = o.Update(d); err != nil {
+			util.AddLog(err)
+			return
 		}
 	}
+
 	return
+}
+
+func (d *DbDisk) _Save(item map[string]interface{}) {
+	for k, v := range item {
+		switch k {
+		case "role":
+			d.Role = v.(string)
+		case "raid":
+			if v == nil {
+				var temp DbDisk
+				d.Raid = temp.Raid
+			} else {
+				r, err := GetRaidsByArgv(map[string]interface{}{"uuid": v})
+				if err != nil {
+					util.AddLog(err)
+					return // TODO thinking !!!!!!!!!
+				}
+				d.Raid = &r.DbRaid
+			}
+		case "link":
+			d.Link = v.(bool)
+		}
+	}
 }
 
 // Get disk's online status
@@ -388,6 +475,7 @@ func (d *Disk) Online() bool {
 	return !f.IsDir()
 }
 
+// Get disk's dev_path
 func (d *Disk) DevPath() (dm_path string) {
 	dm_path = fmt.Sprintf("/dev/mapper/s%s", d.DevName)
 	if _, err := os.Stat(dm_path); os.IsNotExist(err) {

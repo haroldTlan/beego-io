@@ -17,33 +17,47 @@ func init() {
 	orm.RegisterDriver("sqlite3", orm.DRSqlite)
 	orm.RegisterDataBase("default", "sqlite3", "/root/speediodb.db")
 	orm.DefaultTimeLoc = time.Local
-	orm.RegisterModel(new(Teachers), new(Students))
+	orm.RegisterModel(new(T), new(S))
 }
 
-type Teachers struct {
-	Id       int         `orm:"column(Id);pk"	json:"id"`
-	Name     int         `orm:"column(Age)"	json:"age"`
-	Students []*Students `orm:"column(TeacherId);reverse(many)"`
+type T struct {
+	Id   int  `orm:"column(Id);pk"	json:"id"`
+	Name int  `orm:"column(Age)"	json:"age"`
+	Ss   []*S `orm:"column(TeacherId);reverse(many)"`
 }
 
-type Students struct {
-	Id  int       `orm:"column(Id);pk"	json:"id"`
-	Tid *Teachers `orm:"column(TeacherId);rel(fk)"	json:"teacherId"`
+type S struct {
+	Id  int `orm:"column(Id);pk"	json:"id"`
+	Tid *T  `orm:"column(TeacherId);rel(fk)"	json:"teacherId"`
 	//	P   *Teachers `orm:"column(Id);rel(fk)"`
+}
+
+func (d *S) TableName() string {
+	return "Students"
+}
+
+func (d *T) TableName() string {
+	return "Teachers"
 }
 
 func main() {
 	o := orm.NewOrm()
 
-	t := Teachers{Id: 1}
-	err := o.Read(&t)
+	t := T{Id: 1}
+	o.Read(&t)
 
-	fmt.Printf("%+v\n\n", t, err)
-
-	num, err := o.LoadRelated(&t, "Students")
-	fmt.Printf("%+v\n\n", num, err)
+	o.LoadRelated(&t, "Ss")
+	//fmt.Printf("%+v\n\n", num, err)
 
 	fmt.Printf("%+v\n\n", t)
+
+	for _, i := range t.Ss {
+		fmt.Printf("%+v\n\n", i.Tid.Name)
+		fmt.Printf("%+v\n\n", *i)
+	}
+
+	//exist := o.QueryTable(new(Students)).Filter("teacherId", 1).Exist()
+	//fmt.Printf("%+v\n\n", exist)
 	/*var t Teachers
 	var s []*Students
 

@@ -9,15 +9,19 @@ import (
 
 func main() {
 
-	fmt.Println(util.CheckSystemRaid1())
+	//fmt.Println(util.CheckSystemRaid1())
 
-	/*cmd := make([]string, 0)
-	cmd = append(cmd, "--detail", "/dev/md0")
-	output, _ := util.Execute("mdadm", cmd)*/
+	/*	cmd := make([]string, 0)
+		cmd = append(cmd, "--detail", "/dev/md0")
+		output, _ := util.Execute("mdadm", cmd)*/
 
-	//	re := regexp.MustCompile("State :\\s+([^\n]+)")
+	cmd := fmt.Sprintf("mdadm --detail /dev/md0")
+	output, err := util.ExecuteByStr(cmd, true)
+	fmt.Println("segs:", output, err)
+	re := regexp.MustCompile(`State :\s+([^\n]+)`)
+	segs := re.FindAllString(output, -1)
 
-	/*status := strings.FieldsFunc(segs[0], func(c rune) bool { return c == ':' })
+	status := strings.FieldsFunc(segs[0], func(c rune) bool { return c == ':' })
 	sMap := make(map[string]bool, 0)
 	for _, s := range status {
 		sMap[s] = true
@@ -25,7 +29,8 @@ func main() {
 
 	fmt.Println("segs:", segs)
 	fmt.Println("segs:", len(segs))
-	fmt.Println("segs:", strings.FieldsFunc(segs[0], func(c rune) bool { return c == ':' }))*/
+	fmt.Println("segs:", strings.FieldsFunc(segs[0], func(c rune) bool { return c == ':' }))
+	fmt.Println("segs:", len(strings.FieldsFunc(segs[0], func(c rune) bool { return c == ':' })))
 	//fmt.Println(segs[0], ",", segs[1], ",", segs[2], ",", segs[3])
 }
 

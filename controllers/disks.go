@@ -25,7 +25,7 @@ func (c *DisksController) URLMapping() {
 // @Failure 403
 // @router / [get]
 func (c *DisksController) GetAll() {
-	disks, err := models.GetAllDisks()
+	disks, err := models.GetRestDisks()
 
 	result := web.NewResponse(disks, err)
 	c.Data["json"] = &result
