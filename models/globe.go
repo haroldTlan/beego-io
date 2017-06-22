@@ -16,4 +16,8 @@ var (
 	ROLE_SPARE        = "spare"
 	ROLE_UNUSED       = "unused"
 	ROLE_KICKED       = "kicked"
+
+	DISKTYPE_SATA = "sata"
+	DISKTYPE_SAS  = "sas"
+	DISKTYPE_SSD  = "ssd"
 )

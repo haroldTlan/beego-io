@@ -9,12 +9,33 @@ import (
 
 func main() {
 
+	uuid := "b72e1b23-2c3c-4049-89bd-c0fb101fa05e"
+	VALID_CHAR := "[0-9|a-f|A-F]"
+	SPEEDIO_FORMAT := "8-4-4-4-12"
+	fmts := SPEEDIO_FORMAT
+
+	m := regexp.MustCompile(`\d+(.)`)
+	sep := m.FindSubmatch([]byte(fmts))[1]
+	var char []string
+	for _, nr := range strings.Split(fmts, string(sep)) {
+		fmt.Println(nr)
+		c := fmt.Sprintf("%s{%s}", VALID_CHAR, nr)
+		char = append(char, c)
+	}
+	pattern := strings.Join(char, string(sep))
+	fmt.Println(string(sep), char)
+	fmt.Printf("%+v", pattern)
+	fmt.Println(regexp.MatchString(pattern, uuid))
 	//fmt.Println(util.CheckSystemRaid1())
 
 	/*	cmd := make([]string, 0)
 		cmd = append(cmd, "--detail", "/dev/md0")
 		output, _ := util.Execute("mdadm", cmd)*/
 
+	//fmt.Println(segs[0], ",", segs[1], ",", segs[2], ",", segs[3])
+}
+
+func re2() {
 	cmd := fmt.Sprintf("mdadm --detail /dev/md0")
 	output, err := util.ExecuteByStr(cmd, true)
 	fmt.Println("segs:", output, err)
@@ -31,7 +52,6 @@ func main() {
 	fmt.Println("segs:", len(segs))
 	fmt.Println("segs:", strings.FieldsFunc(segs[0], func(c rune) bool { return c == ':' }))
 	fmt.Println("segs:", len(strings.FieldsFunc(segs[0], func(c rune) bool { return c == ':' })))
-	//fmt.Println(segs[0], ",", segs[1], ",", segs[2], ",", segs[3])
 }
 
 func re1() {

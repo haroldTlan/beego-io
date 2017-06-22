@@ -29,6 +29,7 @@ type DbRaid struct {
 	UsedCap    int64     `orm:"column(used_cap)"				    json:"used_cap"`
 	DevName    string    `orm:"column(dev_name);size(255)"          json:"dev_name"`
 	OdevName   string    `orm:"column(odev_name);size(255)"         json:"odev_name"`
+	UnplugSeq  int64     `orm:"column(unplug_seq)"                  json:"unplug_seq"`
 	Deleted    bool      `orm:"column(deleted)"				        json:"deleted"`
 	Disks      []*DbDisk `orm:"column(Id);reverse(many)"			json:"disks"`
 }
@@ -181,19 +182,15 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 		return
 	}
 
-	diskRole := map[string]interface{}{"role": ROLE_DATA}
-	diskSpareRole := map[string]interface{}{"role": ROLE_DATA_SPARE}
-	diskUuid := map[string]interface{}{"raid": uuid}
-	diskLink := map[string]interface{}{"link": true}
 	for _, disk := range dataDisks {
-		if err = disk.Save(diskRole, diskUuid, diskLink); err != nil {
+		if err = disk.Save(map[string]interface{}{"role": ROLE_DATA, "raid": uuid, "link": true}); err != nil {
 			util.AddLog(err)
 			return
 		}
 	}
 
 	for _, disk := range spareDisks {
-		if err = disk.Save(diskSpareRole, diskUuid, diskLink); err != nil {
+		if err = disk.Save(map[string]interface{}{"role": ROLE_DATA_SPARE, "raid": uuid, "link": true}); err != nil {
 			util.AddLog(err)
 			return
 		}
@@ -284,11 +281,8 @@ func _DelRaids(name string) (err error) {
 		return
 	}
 
-	diskRole := map[string]interface{}{"role": ROLE_UNUSED}
-	diskUuid := map[string]interface{}{"raid": nil}
-	diskLink := map[string]interface{}{"link": false}
 	for _, disk := range r.Disks {
-		if err = disk.Save(diskRole, diskUuid, diskLink); err != nil {
+		if err = disk.Save(map[string]interface{}{"role": ROLE_UNUSED, "raid": nil, "link": false}); err != nil {
 			util.AddLog(err)
 			return
 		}
@@ -371,23 +365,38 @@ func (r *DbRaid) _Save(item map[string]interface{}) {
 }
 
 // Get raid disks
-func (r *DbRaid) RaidDisks(raid string) (disks []DbDisk, err error) {
-	disks, err = GetDisksByArgv(map[string]interface{}{"location": raid})
-	if err != nil {
+func (r *DbRaid) RaidDisks() (disks []DbDisk) {
+	o := orm.NewOrm()
+
+	// get foreign keys
+	if _, err := o.LoadRelated(&r, "Disks"); err != nil {
 		util.AddLog(err)
 		return
+	}
+	for _, d := range r.Disks {
+		if d.Role == ROLE_DATA {
+			disks = append(disks, *d)
+		}
 	}
 
 	return
 }
 
 // Get spare disks
-func (r *DbRaid) SpareDisks(spare string) (disks []DbDisk, err error) {
-	disks, err = GetDisksByArgv(map[string]interface{}{"location": spare})
-	if err != nil {
+func (r *DbRaid) SpareDisks() (disks []DbDisk) {
+	o := orm.NewOrm()
+
+	// get foreign keys
+	if _, err := o.LoadRelated(&r, "Disks"); err != nil {
 		util.AddLog(err)
 		return
 	}
+	for _, d := range r.Disks {
+		if d.Role == ROLE_DATA_SPARE {
+			disks = append(disks, *d)
+		}
+	}
+
 	return
 }
 
