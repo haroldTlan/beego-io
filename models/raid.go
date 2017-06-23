@@ -506,7 +506,6 @@ func GetRaidsByArgv(item map[string]interface{}, items ...map[string]interface{}
 			r.DbRaid = raid
 		}
 	}
-	// when items > 0 TODO
 
 	return
 }
@@ -731,6 +730,8 @@ func _next_dev_name() (string, error) {
 
 func dmcreate(name string, rules string) {
 	tmpfile := "/tmp/" + name + ".rule"
+
+	//Write(tmpfile, strings.Join(rules, "\n"))
 
 	cmd := fmt.Sprintf("dmsetup create %s %s", name, tmpfile)
 	util.ExecuteByStr(cmd, true)

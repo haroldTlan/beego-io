@@ -6,6 +6,10 @@ import (
 )
 
 func main() {
+	segs := "asd  asdasdasd                    "
+	//segs = strings.TrimSpace(segs)
+	b := strings.Fields(segs)
+	fmt.Println(len(b))
 
 }
 

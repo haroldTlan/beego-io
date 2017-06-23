@@ -12,11 +12,11 @@ import (
 
 func main() {
 
-	q := map[uint64]string{uint64(22): "sd", uint64(12): "er", uint64(19): "dfg", uint64(16): "pl"}
+	/*q := map[uint64]string{uint64(22): "sd", uint64(12): "er", uint64(19): "dfg", uint64(16): "pl"}
 	for _, i := range q {
 		fmt.Println(i)
 	}
-	sort.Stable(q)
+	sort.Stable(q)*/
 
 	//	a, err := os.Stat("/dev/md0")
 	//if os.IsExist(err) {

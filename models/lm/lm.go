@@ -307,7 +307,6 @@ func RealToLogicMapping(company string, slotNumbers int) map[string]string {
 		return RealToLogicMap
 	} else if company == "normal" && slotNumbers == 16 {
 		RealToLogicMap := map[string]string{
-			"1.1.1":  "sdb",
 			"1.1.2":  "sdc",
 			"1.1.3":  "sdd",
 			"1.1.4":  "sde",

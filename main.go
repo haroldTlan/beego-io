@@ -7,6 +7,7 @@ import (
 	"github.com/astaxie/beego/logs"
 	"github.com/astaxie/beego/orm"
 	_ "github.com/mattn/go-sqlite3"
+	"speedio/models"
 	_ "speedio/routers"
 )
 
@@ -29,6 +30,7 @@ func init() {
 }
 
 func main() {
+	models.ScanAll()
 	if beego.BConfig.RunMode == "dev" {
 		beego.BConfig.WebConfig.DirectoryIndex = true
 		beego.BConfig.WebConfig.StaticDir["/swagger"] = "swagger"

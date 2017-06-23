@@ -9,3 +9,6 @@ continue disk format
 add config infos
 
 add vmware.go, but useless...
+
+add uuid package
+change Save & lookup 's argvs

@@ -17,11 +17,11 @@ var (
 	hostUuid       = ""
 )
 
-func validate(uuid string) bool {
+func Validate(uuid string) bool {
 	m := regexp.MustCompile(`\d+(.)`)
 	sep := m.FindSubmatch([]byte(VALID_CHAR))[1]
 	var char []string
-	for _, nr := range strings.Split(VALID_CHAR, string(sep)) {
+	for _, nr := range strings.Split(SPEEDIO_FORMAT, string(sep)) {
 		c := fmt.Sprintf("%s{%s}", VALID_CHAR, nr)
 		char = append(char, c)
 	}
@@ -35,7 +35,7 @@ func HostUuid() string {
 		hostPath := beego.AppConfig.String("uuid_host_path")
 		if _, err := os.Stat(hostPath); err == nil {
 			hostUuid = ReadFile(hostPath)
-			if !validate(hostUuid) {
+			if !Validate(hostUuid) {
 				os.Remove(hostPath)
 				return HostUuid()
 			}
@@ -48,6 +48,6 @@ func HostUuid() string {
 	return hostUuid
 }
 
-func uuid4() string {
+func Uuid4() string {
 	return Urandom()
 }

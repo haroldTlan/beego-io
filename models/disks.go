@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/astaxie/beego/orm"
+	"speedio/metadata"
 	"speedio/models/lm"
 	"speedio/models/util"
 )
@@ -24,17 +26,20 @@ type DbDisk struct {
 	Health    string    `orm:"column(health);size(255)"                json:"health"`
 	Role      string    `orm:"column(role);size(255)"                  json:"role"`
 	Raid      *DbRaid   `orm:"column(raid);size(255);rel(fk);null"     json:"raid"` //raid's uuid
+	RaidHint  string    `orm:"column(raid_hint);size(255)"             json:"raid_hint"`
 	Disktype  string    `orm:"column(disktype);size(255)"              json:"disktype"`
 	Vendor    string    `orm:"column(vendor);size(255)"                json:"vendor"`
 	Model     string    `orm:"column(model);size(255)"                 json:"model"`
 	Host      string    `orm:"column(host);size(255)"                  json:"host"`
 	Sn        string    `orm:"column(sn);size(255)"                    json:"sn"`
 	CapSector int64     `orm:"column(cap_sector)"                      json:"cap_sector"`
+	DevNo     int64     `orm:"column(devno)"                           json:"devno"`
 	DevName   string    `orm:"column(dev_name);size(255)"              json:"dev_name"`
 	UnplugSeq int64     `orm:"column(unplug_seq)"                      json:"unplug_seq"`
 	Link      bool      `orm:"column(link)"                            json:"link"`
 }
 
+// api output
 type ResDisk struct {
 	Uuid      string  `json:"id"`
 	Health    string  `json:"health"`
@@ -51,7 +56,7 @@ type ResDisk struct {
 
 type Disk struct {
 	DbDisk
-	RaidId string `json:"raid_name"` //raid's name
+	//RaidId string `json:"raid_name"` //raid's name
 }
 
 type Uint64R []uint64
@@ -74,12 +79,13 @@ func init() {
 	orm.RegisterModel(new(DbDisk))
 
 	// scan_all
-	util.AddLog("system start scan")
+	/*util.AddLog("system start scan")
 	if util.CheckSystemRaid1() {
 		//	make_system_rd()
 		//	        check_system_rd()
-	}
+	}*/
 
+	//ScanAll()
 }
 
 func ScanAll() (err error) {
@@ -123,14 +129,13 @@ func ScanAll() (err error) {
 		return
 	}
 
-	for loc, dev_name := range mapping {
+	for loc, devName := range mapping {
 
-		var disk Disk
+		var disk DbDisk
 		disk.Loc = loc
-		disk.DevName = dev_name
+		disk.DevName = devName
 		// TODO parts base
-		_disk := disk.Scan() // TODO goroutine
-		_disk.Save(map[string]interface{}{"prev_location": _disk.Loc})
+		go disk.Scan() // TODO goroutine
 
 	}
 	elapsed := time.Since(start)
@@ -146,54 +151,132 @@ func ScanAll() (err error) {
 func (d *DbDisk) Scan() (disk DbDisk) {
 	d._grabDiskVpd()
 	//log.warning('scan disk %s(%s)...' % (self.location, self.dev_name))
-	host, _ := d.classify()
+	host, md := d.classify()
+	fmt.Println(host)
 	switch host {
 	case "native":
-		d.initNativeDisk()
+		d.initNativeDisk(md)
 	case "local":
-		d.initLocalDisk()
+		d.initLocalDisk(md)
 	case "foreign":
-		d.initForeignDisk()
+		d.initForeignDisk(md)
 	case "used":
 		d.initUsedDisk()
-
+	case "new":
+		d.initNewDisk()
 	}
 
+	d.Role = ROLE_UNUSED
+	d.Save(map[string]interface{}{"prev_location": d.Loc})
 	return
 }
 
-func (d *DbDisk) initNativeDisk() {
+func (d *DbDisk) initNewDisk() {
+	util.AddLog(fmt.Sprintf("init new disk %s(%s)...", d.Loc, d.DevName))
 
+	parts := ""
+	dmcreate("s"+d.DevName, parts)
+
+	start := time.Now()
+	md := metadata.NewDiskMetadata_1()
+	md.Attrs["disk_uuid"] = util.Uuid4()
+	cond := map[string]string{"host_uuid": md.Attrs["host_uuid"], "disk_uuid": md.Attrs["disk_uuid"]}
+
+	if _, err := metadata.Write("/dev/"+d.DevName, 1, cond); err != nil {
+		util.AddLog(err)
+	}
+
+	elapsed := time.Since(start)
+	util.AddLog(fmt.Sprintf("save %s md, cost:%s secs", d.DevName, elapsed))
+
+	d.Id = md.Attrs["disk_uuid"]
+	d.Host = HOST_NATIVE
+
+	// dev's st_rdev
+	stat := syscall.Stat_t{}
+	if err := syscall.Stat(d.DevPath(), &stat); err != nil {
+		util.AddLog(err)
+	}
+	d.DevNo = int64(stat.Rdev)
+
+	util.AddLog("finish scan")
+
+	// return parts?
 }
 
-func (d *DbDisk) initLocalDisk() {
+func (d *DbDisk) initNativeDisk(md *metadata.DiskMetadata_1) {
+	util.AddLog(fmt.Sprintf("init native disk %s(%s)...", d.Loc, d.DevName))
+	d.Id = md.Attrs["disk_uuid"]
+	d.Host = HOST_NATIVE
+	// dev's st_rdev
+	stat := syscall.Stat_t{}
+	err := syscall.Stat(d.DevPath(), &stat)
+	if err != nil {
+		util.AddLog(err)
+	}
+	d.DevNo = int64(stat.Rdev)
 
+	if d.Health != HEALTH_FAILED {
+		d.Health = HEALTH_NORMAL
+	}
+	// TODO parts
 }
 
-func (d *DbDisk) initForeignDisk() {
+func (d *DbDisk) initLocalDisk(md *metadata.DiskMetadata_1) {
+	d.initForeignDisk(md)
+}
 
+func (d *DbDisk) initForeignDisk(md *metadata.DiskMetadata_1) {
+	util.AddLog(fmt.Sprintf("init foreign disk %s(%s)...", d.Loc, d.DevName))
+
+	//TODO parts
+	d.Id = md.Attrs["host_uuid"]
+	d.Host = HOST_FOREIGN
+
+	// dev's st_rdev
+	stat := syscall.Stat_t{}
+	err := syscall.Stat(d.DevPath(), &stat)
+	if err != nil {
+		util.AddLog(err)
+	}
+	d.DevNo = int64(stat.Rdev)
+	d.RaidHint = md.Attrs["raid_uuid"]
 }
 
 func (d *DbDisk) initUsedDisk() {
+	util.AddLog(fmt.Sprintf("init used disk %s(%s)...", d.Loc, d.DevName))
 
+	d.Health = HEALTH_NORMAL
+	d.Id = util.Uuid4()
+	d.Host = HOST_USED
+
+	// dev's st_rdev
+	stat := syscall.Stat_t{}
+	err := syscall.Stat(d.DevPath(), &stat)
+	if err != nil {
+		util.AddLog(err)
+	}
+	d.DevNo = int64(stat.Rdev)
+	util.AddLog("finish scan")
 }
 
 // Scan
-func (d *DbDisk) classify() (string, error) {
+func (d *DbDisk) classify() (string, *metadata.DiskMetadata_1) {
 	if len(d.partitions()) == 0 {
-		//md = Metadata.parse(self.md_path)
-		//if md.host_uuid == uuid.host_uuid()
-		if true { //md.host_uuid == uuid.host_uuid()
-			if true { //self.table.exists(db.Disk.uuid == md.disk_uuid):
-				return "native", nil
+		md, err := metadata.Parse(d.MdPath(), 1)
+		if err == nil {
+			if md.Attrs["host_uuid"] == util.HostUuid() {
+				if d.Uuid() == md.Attrs["disk_uuid"] {
+					return "native", md
+				} else {
+					return "local", md
+				}
 			} else {
-				return "local", nil
+				return "foreign", md
 			}
 		} else {
-			return "foreign", nil //md
+			return "new", nil
 		}
-		// new
-
 	} else {
 		return "used", nil
 	}
@@ -207,7 +290,7 @@ func (d *DbDisk) partitions() (devs []string) {
 		util.AddLog(err)
 	}
 
-	var part map[uint64]string
+	part := make(map[uint64]string, 0)
 	for _, n := range nr {
 		dev := filepath.Base(n)
 		if d.DevName == dev {
@@ -236,42 +319,63 @@ func (d *DbDisk) partitions() (devs []string) {
 }
 
 // Scan
-func (d *DbDisk) _grabDiskVpd() {
+func (d *DbDisk) _grabDiskVpd() (err error) {
 	d.Disktype = DISKTYPE_SATA
 	d.Vendor = "UNKOWN"
 	d.Model = "UNKOWN"
 	d.Sn = ""
 	d.CapSector = 0 //Sector(0)
 
-	// TODO TODO !!!!!!!!!!!!!!!
-	//d.Host = "native"
-	//d.Id =
-
-	/* TODO get vendor & model
 	cmd := fmt.Sprintf("hdparm -I /dev/%s", d.DevName)
-	o, err := util.ExecuteByStr(cmd, true)
-	if err != nil {
-		util.AddLog(err)
-		return err
-	}*/
+	o, _ := util.ExecuteByStr(cmd, true)
 
-	cmd := fmt.Sprintf("blockdev --getsz %s", d.DevPath())
-	size, err := util.ExecuteByStr(cmd, true)
-	if err != nil {
-		return
+	m := regexp.MustCompile(`Model Number:\s*(.+)`)
+	if m.MatchString(o) {
+		mStr := m.FindSubmatch([]byte(o))
+		if len(mStr) == 2 {
+			mList := strings.Fields(string(mStr[1]))
+			if len(mList) == 2 {
+				d.Vendor = mList[0]
+				d.Model = mList[1]
+			}
+		}
 	}
 
-	d.CapSector, _ = strconv.ParseInt(size, 10, 64)
+	mm := regexp.MustCompile(`Serial Number:\s*(.+)`)
+	if mm.MatchString(o) {
+		mmStr := mm.FindSubmatch([]byte(o))
+		//fmt.Printf("!!!\nsn:%+v", mmStr)
+		//fmt.Printf("????\nsn:%+v", string(mmStr[0]))
+		if len(mmStr) == 2 {
+
+			d.Sn = strings.TrimSpace(string(mmStr[1]))
+		}
+	}
+
+	cmd = fmt.Sprintf("blockdev --getsz %s", d.DevPath())
+	sizes, _ := util.ExecuteByStr(cmd, true)
+	size := strings.TrimSpace(sizes)
+
+	if len(size) == 0 {
+		d.CapSector = 0
+	} else {
+		d.CapSector, err = strconv.ParseInt(strings.TrimSpace(sizes), 10, 64)
+		if err != nil {
+			util.AddLog(err)
+			return
+		}
+	}
+	return
 }
 
 // GET
 // Get all disks
 // TODO need filter condition
 func GetRestDisks() (res []ResDisk, err error) {
-	ScanAll()
 	o := orm.NewOrm()
 
 	var ds []DbDisk
+	res = make([]ResDisk, 0)
 	if _, err = o.QueryTable(new(DbDisk)).All(&ds); err != nil { //TODO
 		util.AddLog(err)
 		return
@@ -471,44 +575,21 @@ func RemovePart(dev string) {
 
 }
 
-func (d *Disk) initNewDisk() (err error) {
-	//log.info('init new disk %s(%s)...' % (self.location, self.dev_name))
-	//speedio INFO init new disk 1.1.7(sde)...
-
-	time.Sleep(1 * time.Second)
-	//log.info('create rqr dm, cost:%s secs' % t.secs)
-	//use golang timer to count some times TODO
-	return
-}
-
-// Use location to get disk's info
-func GetDisksByLoc(loc string) (d DbDisk, err error) {
-	o := orm.NewOrm()
-
-	if err = o.QueryTable(new(DbDisk)).Filter("location", loc).One(&d); err != nil {
-		if err.Error() == "<QuerySeter> no row found" {
-			err = fmt.Errorf(" not exist")
-			//TODO          AddLog(err)
-			return
-		}
-		return
-		//TODO          AddLog(err)
-	}
-
-	return
-}
-
 // lookup
 // Get disks by any argv
 func GetDisksByArgv(item map[string]interface{}) (ds []DbDisk, err error) {
 	o := orm.NewOrm()
-	var cond *orm.Condition
-
+	//var cond *orm.Condition
+	//	cond1 :=
 	for k, v := range item {
 
 		switch k {
 		case "uuid":
-			cond.And("uuid", v)
+			if exist := o.QueryTable(new(DbDisk)).Filter(k, v).Exist(); !exist {
+				err = fmt.Errorf("not exist")
+				util.AddLog(err)
+				return
+			}
 		case "location":
 			locs := strings.FieldsFunc(v.(string), func(c rune) bool { return c == ',' }) //Dangerous
 			for _, loc := range locs {
@@ -516,7 +597,6 @@ func GetDisksByArgv(item map[string]interface{}) (ds []DbDisk, err error) {
 					err = fmt.Errorf("not exist")
 					util.AddLog(err)
 					return
-
 				}
 				var temp DbDisk
 				if err = o.QueryTable(new(DbDisk)).Filter(k, loc).One(&temp); err != nil {
@@ -612,6 +692,21 @@ func (d *DbDisk) Save(item map[string]interface{}) (err error) {
 	}
 
 	return
+}
+
+// Get Uuid
+func (d *DbDisk) Uuid() string {
+	o := orm.NewOrm()
+	var disk DbDisk
+	if err := o.QueryTable(new(DbDisk)).Filter("dev_name", d.DevName).Filter("location", d.Loc).One(&disk); err != nil {
+		util.AddLog(err)
+	}
+
+	if disk.Id != "" {
+		return disk.Id
+	}
+
+	return disk.Id
 }
 
 // exist
