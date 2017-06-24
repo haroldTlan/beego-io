@@ -73,14 +73,6 @@ func init() {
 func GetAllRaids() (res []ResRaid, err error) {
 	o := orm.NewOrm()
 
-	var temp []DbRaid
-	if _, err = o.QueryTable(new(DbRaid)).All(&temp); err != nil {
-		util.AddLog(err)
-		return
-	}
-
-	RecordRaidRecovery(temp[len(temp)-1])
-
 	res = make([]ResRaid, 0)
 	var rs []DbRaid
 
