@@ -623,14 +623,14 @@ func GetDisksByArgv(item map[string]interface{}) (ds []DbDisk, err error) {
 // UPDATE
 // Save disk
 // Update Disk's infos
-func (d *DbDisk) Save(item map[string]interface{}) (err error) {
+func (d *DbDisk) Save(items map[string]interface{}) (err error) {
 	o := orm.NewOrm()
 
 	// TODO force
 	force := false
 
 	// checking value
-	for k, v := range item {
+	for k, v := range items {
 		switch k {
 		case "uuid":
 			d.Id = v.(string)

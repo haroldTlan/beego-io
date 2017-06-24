@@ -72,6 +72,15 @@ func init() {
 // TODO more condition to filter
 func GetAllRaids() (res []ResRaid, err error) {
 	o := orm.NewOrm()
+
+	var temp []DbRaid
+	if _, err = o.QueryTable(new(DbRaid)).All(&temp); err != nil {
+		util.AddLog(err)
+		return
+	}
+
+	RecordRaidRecovery(temp[len(temp)-1])
+
 	res = make([]ResRaid, 0)
 	var rs []DbRaid
 
@@ -368,8 +377,10 @@ func (r *DbRaid) _Save(item map[string]interface{}) {
 func (r *DbRaid) RaidDisks() (disks []DbDisk) {
 	o := orm.NewOrm()
 
+	fmt.Printf("%+v", r)
+
 	// get foreign keys
-	if _, err := o.LoadRelated(&r, "Disks"); err != nil {
+	if _, err := o.LoadRelated(r, "Disks"); err != nil {
 		util.AddLog(err)
 		return
 	}
@@ -387,7 +398,7 @@ func (r *DbRaid) SpareDisks() (disks []DbDisk) {
 	o := orm.NewOrm()
 
 	// get foreign keys
-	if _, err := o.LoadRelated(&r, "Disks"); err != nil {
+	if _, err := o.LoadRelated(r, "Disks"); err != nil {
 		util.AddLog(err)
 		return
 	}
@@ -605,7 +616,19 @@ func (r *Raid) mdadmCreate() (err error) {
 		util.AddLog(err)
 		return
 	}
-	//TODO db.RaidRecovery.create
+
+	var rr RaidRecovery
+	var raidUuids, spareUuids []string
+
+	for _, d := range r.RaidDisks {
+		raidUuids = append(raidUuids, d.Id)
+	}
+
+	for _, d := range r.SpareDisks {
+		spareUuids = append(spareUuids, d.Id)
+	}
+	rr.Save(map[string]interface{}{"uuid": r.Id, "name": r.Name, "level": r.Level, "chunk_kb": r.Chunk, "raid_disks_nr": len(r.RaidDisks), "raid_disks": strings.Join(raidUuids, ","), "spare_disks": strings.Join(spareUuids, ","), "spare_disks_nr": len(r.SpareDisks)})
+
 	//partitions>0
 	if r.Level == 5 || r.Level == 6 {
 		r.active_rebuild_priority()

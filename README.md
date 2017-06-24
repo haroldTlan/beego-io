@@ -12,3 +12,5 @@ add vmware.go, but useless...
 
 add uuid package
 change Save & lookup 's argvs
+
+add metadata
