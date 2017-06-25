@@ -3,14 +3,21 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"speedio/models/util"
 )
 
 func main() {
-	segs := "asd  asdasdasd                    "
 	//segs = strings.TrimSpace(segs)
-	b := strings.Fields(segs)
-	fmt.Println(len(b))
+	//b := strings.Fields(segs)
+	//fmt.Println(len(b))
+	uuid := "b8c463dc-3a38-2471-00a6-5252106eb46c"
+	fmt.Println(util.Validate(uuid))
+}
 
+func format() {
+	uuid := "2aae1085-f524-4de9-8db0-aa81d87dfcc4"
+	fmt.Println(util.Format(util.MDADM_FORMAT, uuid))
 }
 
 func uuid() {

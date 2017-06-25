@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/astaxie/beego"
@@ -106,7 +108,7 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 	//TODO _Add check argv
 
 	uuid := util.Urandom()
-	devName, err := _next_dev_name()
+	devName, err := nextDevName()
 	if err != nil {
 		util.AddLog(err)
 		return
@@ -222,7 +224,7 @@ func DelRaids(name string) (err error) {
 	}
 
 	if r.Online() {
-		if r.Health() != HEALTH_FAILED {
+		if r.GetHealth() != HEALTH_FAILED {
 			if err = r.detachVg(); err != nil {
 				util.AddLog(err)
 				return
@@ -289,7 +291,7 @@ func _DelRaids(name string) (err error) {
 		}
 	}
 
-	r.DbRaid.Save(map[string]interface{}{"deleted": true})
+	r.DbRaid.Save(map[string]interface{}{"Deleted": true})
 	/*r.DbRaid.Deleted = true
 	if _, err = o.Update(&r.DbRaid); err != nil {
 		util.AddLog(err)
@@ -353,13 +355,23 @@ func (r *DbRaid) Save(item map[string]interface{}, items ...map[string]interface
 func (r *DbRaid) _Save(item map[string]interface{}) {
 	for k, v := range item {
 		switch k {
-		case "health":
+		case "Name":
+			r.Name = v.(string)
+		case "Health":
 			r.Health = v.(string)
-		case "used_cap":
+		case "Chunk":
+			r.Chunk = v.(int64)
+		case "Cap":
+			r.Cap = v.(int64)
+		case "UsedCap":
 			r.UsedCap = v.(int64)
-		case "odev_name":
+		case "DevName":
+			r.DevName = v.(string)
+		case "OdevName":
 			r.OdevName = v.(string)
-		case "deleted":
+		case "UnplugSeq":
+			r.UnplugSeq = v.(int64)
+		case "Deleted":
 			r.Deleted = v.(bool)
 		}
 	}
@@ -368,8 +380,6 @@ func (r *DbRaid) _Save(item map[string]interface{}) {
 // Get raid disks
 func (r *DbRaid) RaidDisks() (disks []DbDisk) {
 	o := orm.NewOrm()
-
-	fmt.Printf("%+v", r)
 
 	// get foreign keys
 	if _, err := o.LoadRelated(r, "Disks"); err != nil {
@@ -484,7 +494,7 @@ func (r *DbRaid) createCache() {
 		rule := fmt.Sprintf("0 %s cache %s %s %s %s", strings.TrimSpace(size), r.OdevPath(), raidcachememsize, r.Chunk, r.RdsNr) //TODO
 
 		dmcreate(odev_name, rule)
-		r.Save(map[string]interface{}{"odev_name": odev_name})
+		r.Save(map[string]interface{}{"OdevName": odev_name})
 	}
 }
 
@@ -515,8 +525,8 @@ func GetRaidsByArgv(item map[string]interface{}, items ...map[string]interface{}
 
 // func AddRaids
 // Update extents
-func (r *Raid) updateExtents() (err error) {
-	if r.Health() == HEALTH_DEGRADED || r.Health() == HEALTH_NORMAL {
+func (r *DbRaid) updateExtents() (err error) {
+	if r.GetHealth() == HEALTH_DEGRADED || r.GetHealth() == HEALTH_NORMAL {
 		cmd := fmt.Sprintf("pvs %s -o pv_pe_alloc_count,pv_pe_count", r.OdevPath())
 		output, _ := util.ExecuteByStr(cmd, true)
 
@@ -640,7 +650,7 @@ func (r *DbRaid) Online() bool {
 }
 
 // Get raid's health
-func (r *Raid) Health() string {
+func (r *DbRaid) GetHealth() string {
 	time.Sleep(1 * time.Second)
 	cmd := fmt.Sprintf("mdadm --detail %s", r.DevPath())
 	output, err := util.ExecuteByStr(cmd, true)
@@ -721,7 +731,7 @@ func (r *DbRaid) DevPath() string {
 }
 
 // Get raid's dev name
-func _next_dev_name() (string, error) {
+func nextDevName() (string, error) {
 	nr, err := filepath.Glob("/dev/md?*")
 	if err != nil {
 		return "md0", err
@@ -755,4 +765,266 @@ func dmcreate(name string, rules string) {
 	ensureExist(dm_path)
 
 	os.Remove(tmpfile)
+}
+
+/***********************scan raid**********************/
+
+// Find back disk
+func (r *DbRaid) findBackDisks() ([]DbDisk, int64) {
+	disks := make([]DbDisk, 0)
+	unplugSeq := r.UnplugSeq
+
+	if unplugSeq > 0 {
+		var bydisks ByUnplugSeq
+		for _, disk := range r.RaidDisks() {
+			if disk.Role == ROLE_DATA_SPARE && disk.Online() && disk.Health != HEALTH_FAILED && !disk.Link {
+				bydisks = append(bydisks, disk)
+			}
+		}
+		sort.Sort(bydisks)
+		for _, disk := range bydisks {
+			if disk.UnplugSeq > 0 && unplugSeq == disk.UnplugSeq {
+				disks = append(disks, disk)
+				unplugSeq = unplugSeq - 1
+			} else {
+				break
+			}
+		}
+	}
+
+	return disks, unplugSeq
+}
+
+// if can online
+func (r *DbRaid) canOnline(disks []DbDisk) bool {
+	disk_devs := make([]string, 0)
+	for _, disk := range disks {
+		disk_devs = append(disk_devs, disk.DevPath())
+	}
+	cmd := "mdadm --assemble --force --run /dev/md128 " + strings.Join(disk_devs, " ")
+	_, err := util.ExecuteByStr(cmd, true)
+	defer func() {
+		cmd := "mdadm --stop /dev/md128"
+		util.ExecuteByStr(cmd, true)
+	}()
+
+	if err != nil {
+		return false
+	}
+	return true
+}
+
+// func mdadmCreate TODO change method
+func (r *DbRaid) activeRebuildPriority() {
+	//TODO min
+
+	if len(r.RaidDisks()) < 12 {
+		cmd := fmt.Sprintf("echo 20480 > /sys/block/%s/md/stripe_cache_size", r.DevName)
+		if _, err := util.ExecuteByStr(cmd, true); err != nil {
+			return
+		}
+	}
+	cmd := fmt.Sprintf("echo 0 > /sys/block/%s/md/preread_bypass_threshold", r.DevName)
+	if _, err := util.ExecuteByStr(cmd, true); err != nil {
+		return
+	}
+
+	return
+}
+
+// recreate raid when reboot
+func (r *DbRaid) recreateWhenReboot() bool {
+	recoveries, _ := SelectRaidRecovery(map[string]interface{}{"Id": r.Id}, []string{"create_at"}, "desc")
+	if len(recoveries) == 0 {
+		return false
+	}
+
+	devname, err := nextDevName()
+	if err != nil {
+		return false
+	}
+
+	r.DevName = devname
+	mdadmUUID := util.Format(util.MDADM_FORMAT, r.Id)
+	bitmap := beego.AppConfig.String("bitmapfile") + r.Id + ".bitmap"
+	if _, err := os.Stat(bitmap); err == nil {
+		os.Remove(bitmap)
+	}
+
+	diskDevs := make([]string, 0)
+	for _, d := range strings.Split(recoveries[0].RaidDisks, ",") {
+		ds, _ := GetDisksByArgv(map[string]interface{}{"Id": d})
+		if len(ds) != 0 {
+			diskDevs = append(diskDevs, ds[0].DevPath())
+		}
+	}
+
+	if len(diskDevs) != len(r.RaidDisks()) {
+		return false
+	}
+
+	level := strconv.FormatInt(r.Level, 10)
+	count := strconv.Itoa(len(r.RaidDisks()))
+	cmd := fmt.Sprintf("mdadm --create %s --homehost=\"speedio\" --uuid=\"%s\" --level=%s --chunk=256 "+
+		"--raid-disks=%s %s --run --assume-clean --force -q --name=\"%s\" --bitmap=%s "+
+		"--bitmap-chunk=16M --layout=left-symmetric",
+		r.DevPath(), mdadmUUID, level, count, strings.Join(diskDevs, " "), r.Name, bitmap)
+
+	if _, err = util.ExecuteByStr(cmd, true); err != nil {
+		return false
+	}
+
+	var stat os.FileInfo
+	stat, err = os.Stat(r.DevPath())
+	if err != nil {
+		return false
+	}
+	st, _ := stat.Sys().(*syscall.Stat_t)
+	r.Save(map[string]interface{}{"DevNo": st.Rdev, "OdevName": r.DevName})
+
+	if r.Level == 5 || r.Level == 6 {
+		r.activeRebuildPriority()
+	}
+
+	return true
+}
+
+// assemble disks into raid
+func (r *DbRaid) _assemble() {
+	defer func() {
+		cmd := "pvscan"
+		util.ExecuteByStr(cmd, true)
+	}()
+
+	diskDevs := make([]string, 0)
+	raidDisks, lastRDisks := make([]DbDisk, 0), make([]DbDisk, 0)
+
+	for _, disk := range r.RaidDisks() {
+		if disk.Role == ROLE_DATA && disk.Online() && disk.Health != HEALTH_FAILED {
+			raidDisks = append(raidDisks, disk)
+		}
+	}
+	for _, disk := range r.RaidDisks() {
+		if disk.Role == ROLE_DATA_SPARE &&
+			disk.Online() &&
+			disk.Health != HEALTH_FAILED &&
+			!disk.Link &&
+			disk.UnplugSeq == 0 {
+			lastRDisks = append(lastRDisks, disk)
+		}
+	}
+
+	if len(lastRDisks) == 1 {
+		lastRDisks[0].Save(map[string]interface{}{"UnplugSeq": 1})
+		r.Save(map[string]interface{}{"UnplugSeq": 1})
+	}
+	disks, unplugSeq := r.findBackDisks()
+	if unplugSeq == 0 && len(disks) > 0 {
+		disks = disks[:len(disks)-1]
+		unplugSeq = 1
+	}
+	raidDisks = append(raidDisks, disks...)
+	r.DevName, _ = nextDevName()
+	if !r.canOnline(raidDisks) {
+		return
+	}
+
+	for _, disk := range r.RaidDisks() {
+		disk.Save(map[string]interface{}{"link": true, "role": ROLE_DATA, "unplug_seq": 0})
+		diskDevs = append(diskDevs, disk.DevPath())
+	}
+
+	recreated := false
+	if len(diskDevs) == len(r.RaidDisks()) && (r.Level == 5 || r.Level == 6) && r.GetHealth() == HEALTH_NORMAL {
+		recreated = r.recreateWhenReboot()
+	}
+	if recreated {
+		return
+	}
+
+	cmd := ""
+	if r.Level == 5 {
+		bitmap := filepath.Join("bitmap", fmt.Sprintf("%s.bitmap", r.Id))
+		_, err := os.Stat(bitmap)
+		if err == nil {
+			cmd = fmt.Sprintf("mdadm --assemble --force --run --bitmap=%s %s %s", bitmap, r.DevPath(), strings.Join(diskDevs, " "))
+		}
+	}
+	if cmd == "" {
+		cmd = fmt.Sprintf("mdadm --assemble --force --run %s %s", r.DevPath(), strings.Join(diskDevs, " "))
+	}
+
+	_, err := util.ExecuteByStr(cmd, true)
+	if err != nil {
+		util.AddLog(err)
+		return
+	}
+
+	time.Sleep(1 * time.Second)
+	if r.Online() && r.GetHealth() == HEALTH_NORMAL && !r.hasBitmap() {
+		r.createBitmap()
+	}
+	/*var stat os.FileInfo
+	stat, err = os.Stat(r.DevPath())
+	if err != nil {
+		return
+	}
+	st, _ := stat.Sys().(*syscall.Stat_t)
+	r.Save(map[string]interface{}{"DevNo": st.Rdev, "UnplugSeq": unplugSeq, "OdevName": r.DevName}) TODO*/
+	r.Save(map[string]interface{}{"UnplugSeq": unplugSeq, "OdevName": r.DevName})
+
+	if r.Level == 5 || r.Level == 6 {
+		r.activeRebuildPriority()
+	}
+}
+
+// assemble disks into raid
+func (r *DbRaid) assemble() {
+	r._assemble()
+	if r.Online() {
+		r.createCache()
+		//TODO ueventd
+	}
+}
+
+// Scan raid
+func (r *DbRaid) Scan() {
+	for _, disk := range r.RaidDisks() {
+		if !disk.Online() {
+			r.Save(map[string]interface{}{"Role": ROLE_DATA_SPARE})
+		}
+	}
+
+	r.Save(map[string]interface{}{"DevName": "", "OdevName": ""})
+	r.assemble()
+
+	return
+}
+
+func RaidAll() (rds []DbRaid, err error) {
+	o := orm.NewOrm()
+	if _, err = o.QueryTable(new(DbRaid)).All(&rds); err != nil {
+		util.AddLog(err)
+		return
+	}
+	return
+}
+
+func ScanAllRaids() error {
+	rds, err := RaidAll()
+	if err != nil {
+		return err
+	}
+
+	for _, rd := range rds {
+		rd.Scan()
+	}
+
+	cmd := "pvscan"
+	_, err = util.ExecuteByStr(cmd, true)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

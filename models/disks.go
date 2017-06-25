@@ -61,6 +61,12 @@ type Disk struct {
 
 type Uint64R []uint64
 
+type ByUnplugSeq []DbDisk
+
+func (u ByUnplugSeq) Len() int           { return len(u) }
+func (u ByUnplugSeq) Swap(i, j int)      { u[i], u[j] = u[j], u[i] }
+func (u ByUnplugSeq) Less(i, j int) bool { return u[i].UnplugSeq > u[j].UnplugSeq }
+
 func (a Uint64R) Len() int           { return len(a) }
 func (a Uint64R) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a Uint64R) Less(i, j int) bool { return a[i] < a[j] }
@@ -88,7 +94,7 @@ func init() {
 	//ScanAll()
 }
 
-func ScanAll() (err error) {
+func ScanAllDisks() (err error) {
 	util.AddLog("disk scan...")
 	disks, err := DiskAll()
 	if err != nil {
@@ -132,10 +138,15 @@ func ScanAll() (err error) {
 	for loc, devName := range mapping {
 
 		var disk DbDisk
-		disk.Loc = loc
-		disk.DevName = devName
+
+		o := orm.NewOrm()
+		if err = o.QueryTable(new(DbDisk)).Filter("dev_name", devName).Filter("location", loc).One(&disk); err != nil {
+			disk.Loc = loc
+			disk.DevName = devName
+		}
+
 		// TODO parts base
-		go disk.Scan() // TODO goroutine
+		disk.Scan() // TODO goroutine
 
 	}
 	elapsed := time.Since(start)
@@ -152,7 +163,6 @@ func (d *DbDisk) Scan() (disk DbDisk) {
 	d._grabDiskVpd()
 	//log.warning('scan disk %s(%s)...' % (self.location, self.dev_name))
 	host, md := d.classify()
-	fmt.Println(host)
 	switch host {
 	case "native":
 		d.initNativeDisk(md)
@@ -166,7 +176,6 @@ func (d *DbDisk) Scan() (disk DbDisk) {
 		d.initNewDisk()
 	}
 
-	d.Role = ROLE_UNUSED
 	d.Save(map[string]interface{}{"prev_location": d.Loc})
 	return
 }
@@ -198,6 +207,8 @@ func (d *DbDisk) initNewDisk() {
 		util.AddLog(err)
 	}
 	d.DevNo = int64(stat.Rdev)
+	d.Health = HEALTH_NORMAL
+	d.Role = ROLE_UNUSED //TODO
 
 	util.AddLog("finish scan")
 
@@ -344,8 +355,6 @@ func (d *DbDisk) _grabDiskVpd() (err error) {
 	mm := regexp.MustCompile(`Serial Number:\s*(.+)`)
 	if mm.MatchString(o) {
 		mmStr := mm.FindSubmatch([]byte(o))
-		//fmt.Printf("!!!\nsn:%+v", mmStr)
-		//fmt.Printf("????\nsn:%+v", string(mmStr[0]))
 		if len(mmStr) == 2 {
 
 			d.Sn = strings.TrimSpace(string(mmStr[1]))
@@ -665,11 +674,11 @@ func (d *DbDisk) Save(items map[string]interface{}) (err error) {
 		case "sn":
 			d.Sn = v.(string)
 		case "cap_sector":
-			d.CapSector = v.(int64)
+			d.CapSector = int64(v.(int))
 		case "dev_name":
 			d.DevName = v.(string)
 		case "unplug_seq":
-			d.UnplugSeq = v.(int64)
+			d.UnplugSeq = int64(v.(int))
 		case "link":
 			d.Link = v.(bool)
 		}
@@ -719,7 +728,7 @@ func (d *DbDisk) Exist() bool {
 }
 
 // Get disk's online status
-func (d *Disk) Online() bool {
+func (d *DbDisk) Online() bool {
 	// path.exist
 	f, err := os.Stat(d.DevPath())
 	if os.IsNotExist(err) {
