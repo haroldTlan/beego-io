@@ -13,7 +13,7 @@ import (
 
 	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/orm"
-	"speedio/models/util"
+	"speedio/util"
 )
 
 type DbRaid struct {
@@ -102,10 +102,14 @@ func GetAllRaids() (res []ResRaid, err error) {
 
 // POST
 // Create Raid
-func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cache bool) (err error) {
+func AddRaids(name, raid, spare, rebuildPriority string, chunk, level int64, sync bool) (err error) {
 	o := orm.NewOrm()
 
-	//TODO _Add check argv
+	err = CheckRaidsByArgv(map[string]interface{}{"name": name, "level": level, "raid_disks": raid, "spare_disks": spare, "chunk_kb": chunk, "rebuild_priority": rebuildPriority})
+	if err != nil {
+		util.AddLog(err)
+		return
+	}
 
 	uuid := util.Urandom()
 	devName, err := nextDevName()
@@ -117,12 +121,12 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 	var r Raid
 	r.Id = uuid
 	r.Name = name
-	r.Level, _ = strconv.ParseInt(level, 10, 64)
+	r.Level = level
 	r.DevName = devName
 	r.Created = time.Now()
 	r.Updated = time.Now()
 	r.Sync = sync
-	r.Cache = cache
+	r.Cache = false
 	r.Chunk = 256
 
 	// init RaidDisks
@@ -132,11 +136,6 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 		return
 	}
 	r.RdsNr = int64(len(dataDisks))
-	/*dataDisks, err := r.RaidDisks(raid)
-	if err != nil {
-		util.AddLog(err)
-		return
-	}*/
 
 	for _, disk := range dataDisks {
 		var d Disk
@@ -165,7 +164,7 @@ func AddRaids(name, level, raid, spare, chunk, rebuildPriority string, sync, cac
 	}
 
 	//TODO create_ssd()
-	//TODO create_cache()
+	r.DbRaid.createCache() // Create Cache
 
 	cmd_dd := fmt.Sprintf("dd if=/dev/zero of=%s bs=1M count=128", r.OdevPath())
 	if _, err = util.ExecuteByStr(cmd_dd, true); err != nil {
@@ -441,7 +440,7 @@ func (r *DbRaid) createBitmap() {
 		bitmapSize, _ := beego.AppConfig.Int("bitmapsize")
 
 		bitmap := bitmapFile + r.Id + ".bitmap"
-		cmd := fmt.Sprintf("mdadm --grow --bitmap=%s --bitmap-chunk=%sM %s", bitmap, bitmapSize, r.DevPath())
+		cmd := fmt.Sprintf("mdadm --grow --bitmap=%s --bitmap-chunk=%sM %s", bitmap, strconv.Itoa(bitmapSize), r.DevPath())
 		util.ExecuteByStr(cmd, true)
 	}
 }
@@ -482,42 +481,42 @@ func (r *DbRaid) deleteCache() {
 
 // Create cache
 func (r *DbRaid) createCache() {
-	cacheEnabled, _ := beego.AppConfig.Bool("cacheenable")
+	cacheEnabled, _ := beego.AppConfig.Bool("cache_enable")
 	raidcachememsize, _ := beego.AppConfig.Int("raid_cache_mem_size")
-	if !cacheEnabled {
+	if cacheEnabled {
+		//var cmd []string
+		//cmd = append(cmd, "--getsz", r.OdevPath())
 		cmd := fmt.Sprintf("blockdev --getsz %s", r.OdevPath())
+		//size, err := util.Execute("blockdev", cmd, true)
 		size, err := util.ExecuteByStr(cmd, true)
+		fmt.Printf("size:\n%+v %+v", size, err)
 		if err != nil {
-			return
+			//		return
 		}
 		odev_name := "c" + r.DevName
-		rule := fmt.Sprintf("0 %s cache %s %s %s %s", strings.TrimSpace(size), r.OdevPath(), raidcachememsize, r.Chunk, r.RdsNr) //TODO
-
+		rule := fmt.Sprintf("0 %s cache %s %s %s %s", strings.TrimSpace(size), r.OdevPath(), strconv.Itoa(raidcachememsize*raidcachememsize), strconv.FormatInt(r.Chunk*r.Chunk, 10), strconv.FormatInt(r.RdsNr-1, 10)) //TODO
 		dmcreate(odev_name, rule)
 		r.Save(map[string]interface{}{"OdevName": odev_name})
 	}
 }
 
-// speedio lookup
-// return Raid
-func GetRaidsByArgv(item map[string]interface{}, items ...map[string]interface{}) (r Raid, err error) {
+// Raids Lookup
+func GetRaidsByArgv(items map[string]interface{}) (r Raid, err error) {
 	o := orm.NewOrm()
 
-	if len(items) == 0 {
-		for k, v := range item {
-			if exist := o.QueryTable(new(DbRaid)).Filter(k, v).Exist(); !exist {
-				err = fmt.Errorf("not exist")
-				util.AddLog(err)
-				return
-			}
-
-			var raid DbRaid
-			if err = o.QueryTable(new(DbRaid)).Filter(k, v).Filter("deleted", false).One(&raid); err != nil {
-				util.AddLog(err)
-				return
-			}
-			r.DbRaid = raid
+	for k, v := range items {
+		if exist := o.QueryTable(new(DbRaid)).Filter(k, v).Exist(); !exist {
+			err = fmt.Errorf("not exist")
+			util.AddLog(err)
+			return
 		}
+
+		var raid DbRaid
+		if err = o.QueryTable(new(DbRaid)).Filter(k, v).Filter("deleted", false).One(&raid); err != nil {
+			util.AddLog(err)
+			return
+		}
+		r.DbRaid = raid
 	}
 
 	return
@@ -569,13 +568,12 @@ func (r *DbRaid) joinVg() (err error) {
 // func AddRaids
 // Mdadm created
 func (r *Raid) mdadmCreate() (err error) {
-	u := strings.Join(strings.Split(r.Id, "-"), "")
-	mdadmUuid := fmt.Sprintf("%s-%s-%s-%s", u[0:8], u[8:16], u[16:24], u[24:])
-
 	var raid_disk_paths []string
 	for _, d := range r.RaidDisks {
 		raid_disk_paths = append(raid_disk_paths, d.DevPath())
 	}
+
+	mdadmUuid := util.Format(util.MDADM_FORMAT, r.Id)
 
 	var sync, cmd string
 
@@ -586,28 +584,27 @@ func (r *Raid) mdadmCreate() (err error) {
 	}
 
 	bitmapFile := beego.AppConfig.String("bitmapfile")
-	//bitmapFile := "/home/zonion/bitmap/"
 	bitmap := bitmapFile + r.Id + ".bitmap"
+	homehost := beego.AppConfig.String("raid_homehost")
 
-	//TODO	homehost := "speedio"
 	//TODO chunk
 	//TODO --bitmap-chunk
 	//TODO --layout
 	level := strconv.FormatInt(r.Level, 10)
 	count := strconv.Itoa(len(raid_disk_paths))
 	if r.Level == 0 {
-		cmd = fmt.Sprintf("mdadm --create %s --homehost=\"speedio\" --uuid=\"%s\" --level=%s "+
+		cmd = fmt.Sprintf("mdadm --create %s --homehost=\"%s\" --uuid=\"%s\" --level=%s "+
 			"--chunk=256 --raid-disks=%s %s --run --force -q --name=\"%s\"",
-			r.DevPath(), mdadmUuid, level, count, strings.Join(raid_disk_paths, " "), r.Name)
+			r.DevPath(), homehost, mdadmUuid, level, count, strings.Join(raid_disk_paths, " "), r.Name)
 	} else if r.Level == 1 || r.Level == 10 {
-		cmd = fmt.Sprintf("mdadm --create %s --homehost=\"speedio\" --uuid=\"%s\" --level=%s "+
+		cmd = fmt.Sprintf("mdadm --create %s --homehost=\"%s\" --uuid=\"%s\" --level=%s "+
 			"--chunk=256 --raid-disks=%s %s --run %s --force -q --name=\"%s\" --bitmap=%s --bitmap-chunk=16M",
-			r.DevPath(), mdadmUuid, level, count, strings.Join(raid_disk_paths, " "), sync, r.Name, bitmap)
+			r.DevPath(), homehost, mdadmUuid, level, count, strings.Join(raid_disk_paths, " "), sync, r.Name, bitmap)
 
 	} else {
-		cmd = fmt.Sprintf("mdadm --create %s --homehost=\"speedio\" --uuid=\"%s\" --level=%s "+
+		cmd = fmt.Sprintf("mdadm --create %s --homehost=\"%s\" --uuid=\"%s\" --level=%s "+
 			"--chunk=256 --raid-disks=%s %s --run %s --force -q --name=\"%s\" --bitmap=%s --bitmap-chunk=16M --layout=left-symmetric",
-			r.DevPath(), mdadmUuid, level, count, strings.Join(raid_disk_paths, " "), sync, r.Name, bitmap)
+			r.DevPath(), homehost, mdadmUuid, level, count, strings.Join(raid_disk_paths, " "), sync, r.Name, bitmap)
 	}
 
 	if _, err = util.ExecuteByStr(cmd, true); err != nil {
@@ -715,8 +712,9 @@ func (r *DbRaid) VgName() string {
 
 // Get raid's odev_path
 func (r *DbRaid) OdevPath() string {
+	//cacheEnabled, _ := beego.AppConfig.Bool("cache_enable")
 	if false {
-		//cache
+		return "/dev/mapper/c" + r.DevName
 	}
 	if false {
 		//sdd
@@ -728,6 +726,78 @@ func (r *DbRaid) OdevPath() string {
 // Get raid's dev path
 func (r *DbRaid) DevPath() string {
 	return "/dev/" + r.DevName
+}
+
+// Checking by function AddRaids
+func CheckRaidsByArgv(items map[string]interface{}) (err error) {
+	o := orm.NewOrm()
+
+	for k, v := range items {
+
+		switch k {
+		case "name":
+			if exist := o.QueryTable(new(DbRaid)).Filter(k, v).Exist(); exist {
+				err = fmt.Errorf(v.(string) + " has existed")
+				return
+			}
+		case "level":
+			if _, ok := LEVEL[v.(int64)]; !ok {
+				err = fmt.Errorf("invalid param level=" + strconv.FormatInt(v.(int64), 10))
+				return
+			}
+		case "raid_disks", "spare_disks":
+			disks := strings.FieldsFunc(v.(string), func(c rune) bool { return c == ',' })
+			level := items["level"].(int64)
+			count := len(disks)
+
+			if count == 0 && k == "spare_disks" {
+				continue
+			}
+			for _, disk := range disks {
+				if exist := o.QueryTable(new(DbDisk)).Filter("location", disk).Exist(); !exist {
+					err = fmt.Errorf(k + " location=" + disk + " has not exist")
+					return
+				} else if exist := o.QueryTable(new(DbDisk)).Filter("health", HEALTH_NORMAL).Filter("role", ROLE_UNUSED).Filter("location", disk).Exist(); !exist {
+					err = fmt.Errorf(k + " " + disk + " has used")
+					return
+				}
+			}
+
+			if k == "spare_disks" {
+				continue
+			}
+
+			if count == 0 {
+				err = fmt.Errorf("0 disks are not enough to create level " + strconv.FormatInt(level, 10) + " raid")
+				return
+			}
+
+			if level == 1 {
+				if count > 2 {
+					err = fmt.Errorf("level 1 raid only support 2 disks")
+					return
+				} else if count < 2 {
+					err = fmt.Errorf(strconv.Itoa(count) + " disks are not enough to create level 1 raid")
+					return
+				}
+			}
+			if level == 5 && count < 3 {
+				err = fmt.Errorf(strconv.Itoa(count) + " disks are not enough to create level 5 raid")
+				return
+			}
+		case "rebuild_priority":
+			if _, ok := REBUILD_PRIORITY[v.(string)]; !ok {
+				err = fmt.Errorf("invalid param rebuild=" + v.(string))
+				return
+			}
+		case "chunk_kb":
+			if v.(int64)%64 != 0 {
+				err = fmt.Errorf("invalid param chunk=" + strconv.FormatInt(v.(int64), 10))
+				return
+			}
+		}
+	}
+	return
 }
 
 // Get raid's dev name
@@ -756,15 +826,20 @@ func nextDevName() (string, error) {
 func dmcreate(name string, rules string) {
 	tmpfile := "/tmp/" + name + ".rule"
 
-	//Write(tmpfile, strings.Join(rules, "\n"))
+	fmt.Println(rules)
+	cmd := fmt.Sprintf("touch %s", tmpfile)
+	util.WriteFile(tmpfile, rules+"\n")
+	//create file
 
-	cmd := fmt.Sprintf("dmsetup create %s %s", name, tmpfile)
+	util.ExecuteByStr(cmd, true)
+
+	cmd = fmt.Sprintf("dmsetup create %s %s", name, tmpfile)
 	util.ExecuteByStr(cmd, true)
 
 	dm_path := "/dev/mapper/" + name
 	ensureExist(dm_path)
 
-	os.Remove(tmpfile)
+	//os.Remove(tmpfile)
 }
 
 /***********************scan raid**********************/
@@ -1028,3 +1103,8 @@ func ScanAllRaids() error {
 
 	return nil
 }
+
+/*
+	err = fmt.Errorf("")
+		return
+*/

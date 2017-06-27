@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/astaxie/beego"
-	"speedio/models/util"
+	"speedio/util"
 )
 
 type LocationMapping struct {
@@ -64,7 +64,7 @@ func (l *LocationMapping) Init() {
 				}
 			}
 		}
-		l.DsuList["1.1"] = 16
+		l.DsuList["1.1"] = sn
 		//	fmt.Printf("???%+v", l.Mapping)
 		return
 	} else if c > 8 {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/astaxie/beego/orm"
-	"speedio/models/util"
+	"speedio/util"
 )
 
 type RaidRecovery struct {

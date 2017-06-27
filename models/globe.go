@@ -17,7 +17,9 @@ var (
 	ROLE_UNUSED       = "unused"
 	ROLE_KICKED       = "kicked"
 
-	DISKTYPE_SATA = "sata"
-	DISKTYPE_SAS  = "sas"
-	DISKTYPE_SSD  = "ssd"
+	DISKTYPE_SATA    = "sata"
+	DISKTYPE_SAS     = "sas"
+	DISKTYPE_SSD     = "ssd"
+	LEVEL            = map[int64]bool{0: true, 1: true, 5: true, 6: true}
+	REBUILD_PRIORITY = map[string]bool{"low": true, "medium": true, "high": true}
 )

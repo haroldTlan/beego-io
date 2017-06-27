@@ -14,7 +14,7 @@ import (
 	"github.com/astaxie/beego/orm"
 	"speedio/metadata"
 	"speedio/models/lm"
-	"speedio/models/util"
+	"speedio/util"
 )
 
 type DbDisk struct {
@@ -136,9 +136,7 @@ func ScanAllDisks() (err error) {
 	}
 
 	for loc, devName := range mapping {
-
 		var disk DbDisk
-
 		o := orm.NewOrm()
 		if err = o.QueryTable(new(DbDisk)).Filter("dev_name", devName).Filter("location", loc).One(&disk); err != nil {
 			disk.Loc = loc
@@ -163,6 +161,8 @@ func (d *DbDisk) Scan() (disk DbDisk) {
 	d._grabDiskVpd()
 	//log.warning('scan disk %s(%s)...' % (self.location, self.dev_name))
 	host, md := d.classify()
+
+	fmt.Println(host)
 	switch host {
 	case "native":
 		d.initNativeDisk(md)
@@ -183,8 +183,8 @@ func (d *DbDisk) Scan() (disk DbDisk) {
 func (d *DbDisk) initNewDisk() {
 	util.AddLog(fmt.Sprintf("init new disk %s(%s)...", d.Loc, d.DevName))
 
-	parts := ""
-	dmcreate("s"+d.DevName, parts)
+	//parts := "" // TODO
+	//dmcreate("s"+d.DevName, parts)
 
 	start := time.Now()
 	md := metadata.NewDiskMetadata_1()
@@ -207,11 +207,8 @@ func (d *DbDisk) initNewDisk() {
 		util.AddLog(err)
 	}
 	d.DevNo = int64(stat.Rdev)
-	d.Health = HEALTH_NORMAL
-	d.Role = ROLE_UNUSED //TODO
 
 	util.AddLog("finish scan")
-
 	// return parts?
 }
 
@@ -241,8 +238,6 @@ func (d *DbDisk) initForeignDisk(md *metadata.DiskMetadata_1) {
 	util.AddLog(fmt.Sprintf("init foreign disk %s(%s)...", d.Loc, d.DevName))
 
 	//TODO parts
-	d.Id = md.Attrs["host_uuid"]
-	d.Host = HOST_FOREIGN
 
 	// dev's st_rdev
 	stat := syscall.Stat_t{}
@@ -250,8 +245,12 @@ func (d *DbDisk) initForeignDisk(md *metadata.DiskMetadata_1) {
 	if err != nil {
 		util.AddLog(err)
 	}
+
+	d.Id = md.Attrs["disk_uuid"]
+	d.Host = HOST_FOREIGN
 	d.DevNo = int64(stat.Rdev)
 	d.RaidHint = md.Attrs["raid_uuid"]
+	fmt.Printf("%+v", d)
 }
 
 func (d *DbDisk) initUsedDisk() {
@@ -277,6 +276,7 @@ func (d *DbDisk) classify() (string, *metadata.DiskMetadata_1) {
 		md, err := metadata.Parse(d.MdPath(), 1)
 		if err == nil {
 			if md.Attrs["host_uuid"] == util.HostUuid() {
+				fmt.Println("111")
 				if d.Uuid() == md.Attrs["disk_uuid"] {
 					return "native", md
 				} else {
@@ -438,7 +438,7 @@ func FormatDisks(locations string) (res string, err error) {
 	var d Disk
 	if locations == "all" {
 		var disks []DbDisk
-		if _, err = o.QueryTable(new(DbDisk)).RelatedSel().All(&disks); err != nil { //TODO
+		if _, err = o.QueryTable(new(DbDisk)).All(&disks); err != nil { //TODO
 			util.AddLog(err)
 			return "", err
 		}
@@ -466,8 +466,7 @@ func FormatDisks(locations string) (res string, err error) {
 			}
 			for _, disk := range disks {
 				d.DbDisk = disk
-				err = d.Format()
-				if err != nil {
+				if err = d.Format(); err != nil {
 					util.AddLog(err)
 					return "", err
 				}
@@ -498,10 +497,10 @@ func (d *Disk) Format() (err error) {
 	dd = append(dd, "dd", "if=/dev/zero", "of=", "%s", "bs=4K", "count=16384", "oflag=direct")
 	block = append(block, "blockdev", "--rereadpt", "")
 
-	if res, err := util.Execute("/bin/sh", dd); err != nil {
+	if res, err := util.Execute("/bin/sh", dd, true); err != nil {
 		fmt.Println(res, "\n", err)
 	}
-	if res, err := util.Execute("/bin/sh", block); err != nil {
+	if res, err := util.Execute("/bin/sh", block, true); err != nil {
 		fmt.Println(res, "\n", err)
 		//TODO 	        AddLog(err)
 		return err
@@ -571,7 +570,7 @@ func ensureExist(path string) (err error) {
 	}
 
 	if _, err = os.Stat(path); err == nil {
-		util.ReadFile(path)
+		//util.ReadFile(path)
 		return
 	} else {
 		err = fmt.Errorf("ensure " + path + " exist error")
@@ -684,6 +683,14 @@ func (d *DbDisk) Save(items map[string]interface{}) (err error) {
 		}
 	}
 
+	// Default
+	if len(d.Health) == 0 {
+		d.Health = HEALTH_NORMAL
+	}
+	if len(d.Role) == 0 {
+		d.Role = ROLE_UNUSED
+	}
+
 	if !d.Exist() || force {
 		d.Created = time.Now()
 		d.Updated = time.Now()
@@ -693,6 +700,11 @@ func (d *DbDisk) Save(items map[string]interface{}) (err error) {
 			return
 		}
 	} else {
+		// Keep Created
+		if d.Created.IsZero() {
+			d.Created = time.Now()
+		}
+
 		d.Updated = time.Now()
 		if _, err = o.Update(d); err != nil {
 			util.AddLog(err)
@@ -709,6 +721,7 @@ func (d *DbDisk) Uuid() string {
 	var disk DbDisk
 	if err := o.QueryTable(new(DbDisk)).Filter("dev_name", d.DevName).Filter("location", d.Loc).One(&disk); err != nil {
 		util.AddLog(err)
+		return ""
 	}
 
 	if disk.Id != "" {

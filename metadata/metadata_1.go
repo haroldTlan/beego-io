@@ -3,7 +3,7 @@ package metadata
 import (
 	"errors"
 	"os"
-	"speedio/models/util"
+	"speedio/util"
 )
 
 const (

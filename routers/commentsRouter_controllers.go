@@ -20,6 +20,13 @@ func init() {
 			AllowHTTPMethods: []string{"put"},
 			Params: nil})
 
+	beego.GlobalControllerRouter["speedio/controllers:InitsController"] = append(beego.GlobalControllerRouter["speedio/controllers:InitsController"],
+		beego.ControllerComments{
+			Method: "Post",
+			Router: `/`,
+			AllowHTTPMethods: []string{"get"},
+			Params: nil})
+
 	beego.GlobalControllerRouter["speedio/controllers:RaidsController"] = append(beego.GlobalControllerRouter["speedio/controllers:RaidsController"],
 		beego.ControllerComments{
 			Method: "GetAll",

@@ -16,3 +16,5 @@ change Save & lookup 's argvs
 add metadata
 
 add raid scans
+
+add raid create checking

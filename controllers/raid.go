@@ -40,15 +40,15 @@ func (c *RaidsController) GetAll() {
 // @router / [post]
 func (c *RaidsController) Post() {
 	name := c.GetString("name")
-	level := c.GetString("level")
+	level, _ := c.GetInt64("level")
+	chunk, _ := c.GetInt64("chunk")
 	raid := c.GetString("raid_disks")
 	spare := c.GetString("spare_disks")
-	chunk := "256KB"
-	rebuildPriority := "low"
-	sync := false
-	cache := false
 
-	err := models.AddRaids(name, level, raid, spare, chunk, rebuildPriority, sync, cache)
+	rebuildPriority := c.GetString("rebuild_priority")
+	sync := false
+
+	err := models.AddRaids(name, raid, spare, rebuildPriority, chunk, level, sync)
 	result := web.NewResponse(err, err)
 	c.Data["json"] = &result
 

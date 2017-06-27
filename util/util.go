@@ -48,7 +48,10 @@ func ExecuteByStr(cmdArgs string, logging bool) (output string, err error) {
 }
 
 // Cmd
-func Execute(name string, cmdArgs []string) (output string, err error) {
+func Execute(name string, cmdArgs []string, logging bool) (output string, err error) {
+	if logging {
+		AddLog(cmdArgs)
+	}
 	cmd := exec.Command(name, cmdArgs...)
 
 	// Stdout buffer
